@@ -1,0 +1,42 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- Game decompilation output ----
+# You generate these yourself from your own copy of the game.
+# They are NOT ours to redistribute and NEVER belong in version control.
+decompiled/
+decompiled_main/
+decompiled_fighters/
+decompiled_assets/
+decompiled_frames/
+*.swf
+*.orig
+
+# ---- Runtime artifacts ----
+runs/
+*.log
+
+# ---- Datasets and models (large, regenerable) ----
+data/*.npz
+data/*.csv
+!data/sample_*.npz
+!data/sample_*.csv
+
+# ---- Temp / intermediate ----
+*.bak
+*.bak[0-9]*
+.tmp*/
+.WorkingDir/
+start_config.json
+
+# ---- OS ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- git helper ----
+.git-msg.tmp

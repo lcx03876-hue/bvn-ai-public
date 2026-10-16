@@ -1,0 +1,51 @@
+NOTICE
+======
+
+Third-party components and scope of this repository
+---------------------------------------------------
+
+1. The game
+-----------
+
+**死神vs火影 绊 - 开放** (also known in English as *Bleach vs Naruto*, "BVN")
+is a fan-made fighting game created by **剑jian** and **5DPLAY Game Studio**.
+It is written in ActionScript 3.0 and distributed as a Flash/Adobe AIR
+application.
+
+This repository **does not contain, redistribute, or mirror any game code,
+artwork, audio, or other assets**. Nothing under this repository's license
+applies to the game.
+
+Everything in the `game_patches/` directory is **our own original
+ActionScript**, written to be injected into a user's *own* decompiled copy of
+the game. Some scripts in this repository can read and modify files on the
+user's machine; they operate only on the paths you point them at, and you are
+responsible for having the legal right to modify your copy of the game.
+
+If you want to use this project you must obtain the game yourself.
+
+2. Related upstream projects
+----------------------------
+
+For reference, the game and some of its derivatives are publicly available:
+
+* https://github.com/5DPLAY-Game-Studio/BleachVsNaruto  (upstream game)
+* https://github.com/LittleFatasmaGod/BleachVsNarutoX   (a derivative, GPL-3.0)
+
+If your copy of the game is covered by the GNU GPL, then the patch snippets in
+`game_patches/` — being modifications to that GPL-covered source — are
+distributed under the same terms when combined with it. Our Python tooling
+remains under the MIT license (see `LICENSE`); the two are separable.
+
+3. Toolchain
+------------
+
+* **FFDec** (JPEXS Free Flash Decompiler) — used to decompile and recompile
+  SWF files. Not included here. https://github.com/jindrapetrik/jpexs-decompiler
+* Python packages listed in `requirements.txt`, each under its own license.
+
+4. No warranty
+--------------
+
+This software is provided "as is". It automates input to a game window; run it
+at your own risk and only in a single-player / offline context.

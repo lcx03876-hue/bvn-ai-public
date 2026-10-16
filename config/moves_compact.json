@@ -1,0 +1,4959 @@
+{
+  "version": "OpenBVN / 死神vs火影 绊-开放",
+  "keymap": {
+    "attack": [
+      "J",
+      "砍",
+      0
+    ],
+    "skill1": [
+      "↓+J",
+      "砍技1",
+      0
+    ],
+    "skill2": [
+      "↑+J",
+      "砍技2",
+      0
+    ],
+    "zhao1": [
+      "U",
+      "抓",
+      0
+    ],
+    "zhao2": [
+      "↓+U",
+      "抓",
+      0
+    ],
+    "zhao3": [
+      "↑+U",
+      "抓",
+      0
+    ],
+    "catch1": [
+      "←/→+J",
+      "握",
+      0
+    ],
+    "catch2": [
+      "←/→+U",
+      "握",
+      0
+    ],
+    "bisha": [
+      "I",
+      "必杀",
+      100
+    ],
+    "bishaUP": [
+      "↑+I",
+      "上必杀",
+      100
+    ],
+    "bishaSUPER": [
+      "↓+I",
+      "超必杀",
+      300
+    ],
+    "bishaAIR": [
+      "空中I",
+      "空中必杀",
+      100
+    ],
+    "attackAIR": [
+      "空中J",
+      "跳砍",
+      0
+    ],
+    "skillAIR": [
+      "空中U",
+      "跳招",
+      0
+    ],
+    "hurt": [
+      "受击",
+      "受击",
+      0
+    ]
+  },
+  "characters": {
+    "aizen": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 13.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 130
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5",
+                "k52"
+              ],
+              "power_total": 220
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj2",
+                "kj21",
+                "kj22",
+                "kj1",
+                "kj12"
+              ],
+              "power_total": 420
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 410
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 100
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "sbs2",
+                "sbs3",
+                "sbs4",
+                "kbs",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 655
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "byakuya": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 100
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 110
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 140
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh32"
+              ],
+              "power_total": 220
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 110
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs"
+              ],
+              "power_total": 510
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 13.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 170
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 100
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 140
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh21",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 430
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 80
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 300
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "chad": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 6.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz1",
+                "tz"
+              ],
+              "power_total": 170
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 180
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 360
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 290
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs",
+                "cbs1"
+              ],
+              "power_total": 770
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "deidara": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tz",
+                "tk"
+              ],
+              "power_total": 120
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 170
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh21",
+                "zh3",
+                "zh31",
+                "zh32"
+              ],
+              "power_total": 270
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs2",
+                "bs"
+              ],
+              "power_total": 290
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "kbs2",
+                "kbs",
+                "kbs1",
+                "cbs"
+              ],
+              "power_total": 1000
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "gaara": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 8.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 300
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 200
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 340
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs2",
+                "sbs3",
+                "sbs",
+                "cbs",
+                "cbs3",
+                "cbs2",
+                "cbs1"
+              ],
+              "power_total": 750
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "gin": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 220
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 140
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 270
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 400
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23"
+              ],
+              "power_total": 110
+            }
+          }
+        }
+      ]
+    },
+    "grimmjow": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 110
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 180
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 135
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh31",
+                "zh3"
+              ],
+              "power_total": 320
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "kbs",
+                "kbs1",
+                "cbs1",
+                "cbs",
+                "cbs2",
+                "cbs3"
+              ],
+              "power_total": 460
+            }
+          }
+        }
+      ]
+    },
+    "ichigo": {
+      "n_forms": 7,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 6.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 100
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 160
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 220
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs"
+              ],
+              "power_total": 710
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 150
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 100
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 170
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 210
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs2",
+                "cbs"
+              ],
+              "power_total": 640
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 2,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz2"
+              ],
+              "power_total": 190
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 230
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 350
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 280
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "kbs",
+                "cbs"
+              ],
+              "power_total": 1050
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 3,
+          "speed": 14.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz1"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 230
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 250
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 300
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 1400
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 4,
+          "speed": 7.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk"
+              ],
+              "power_total": 40
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 160
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 240
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs2",
+                "bs"
+              ],
+              "power_total": 260
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs"
+              ],
+              "power_total": 220
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 5,
+          "speed": 9.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2",
+                "kj22",
+                "kj21"
+              ],
+              "power_total": 130
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh21",
+                "zh3"
+              ],
+              "power_total": 290
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 270
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 450
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 6,
+          "speed": 11.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 200
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 200
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj13",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 410
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh31",
+                "zh3"
+              ],
+              "power_total": 500
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1",
+                "bs2"
+              ],
+              "power_total": 440
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs"
+              ],
+              "power_total": 910
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "ikkaku": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 11.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz1"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 180
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj21",
+                "kj2",
+                "kj22"
+              ],
+              "power_total": 210
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 470
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 250
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 610
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "itachi": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tz",
+                "tk",
+                "tk2",
+                "tk3"
+              ],
+              "power_total": 210
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 250
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 320
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh21",
+                "zh3",
+                "zh32"
+              ],
+              "power_total": 270
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "cbs",
+                "cbs1",
+                "cbs2",
+                "cbs3"
+              ],
+              "power_total": 785
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "jiraiya": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tk1",
+                "tz"
+              ],
+              "power_total": 210
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj22",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 300
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh21",
+                "zh2",
+                "zh3",
+                "zh31",
+                "zh32"
+              ],
+              "power_total": 390
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs2",
+                "bs"
+              ],
+              "power_total": 160
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs2",
+                "cbs",
+                "cbs2"
+              ],
+              "power_total": 240
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23",
+                "sh24"
+              ],
+              "power_total": 140
+            }
+          }
+        }
+      ]
+    },
+    "juggo": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 7.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 130
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 250
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh11",
+                "zh21",
+                "zh2",
+                "zh22",
+                "zh3",
+                "zh32"
+              ],
+              "power_total": 460
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 200
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 550
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "kakashi": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 80
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k21",
+                "k3"
+              ],
+              "power_total": 130
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2",
+                "kj22"
+              ],
+              "power_total": 200
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh13",
+                "zh14",
+                "zh2",
+                "zh31",
+                "zh32",
+                "zh3"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs2",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 470
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 230
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tk2",
+                "tk3",
+                "tz",
+                "tz2"
+              ],
+              "power_total": 190
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k22",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 260
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj9",
+                "kj99",
+                "kj12",
+                "kj6",
+                "kj2",
+                "kj26",
+                "kj27"
+              ],
+              "power_total": 340
+            },
+            "unknown": {
+              "key": "?",
+              "qi": 0,
+              "ids": [
+                "fake"
+              ],
+              "power_total": 60
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 170
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 250
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs0",
+                "sbsshui",
+                "sbstu",
+                "sbshuo",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs"
+              ],
+              "power_total": 1400
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "karin": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 210
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj22",
+                "kj2"
+              ],
+              "power_total": 180
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh11",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 340
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 260
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 570
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "kenpachi": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz1",
+                "tz"
+              ],
+              "power_total": 220
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj11",
+                "kj1",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 240
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 450
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 200
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs4",
+                "cbs5",
+                "cbs"
+              ],
+              "power_total": 250
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23"
+              ],
+              "power_total": 175
+            }
+          }
+        }
+      ]
+    },
+    "kenshin": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 110
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 110
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 230
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 205
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 120
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 1060
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 14.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tk2",
+                "tz"
+              ],
+              "power_total": 290
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 240
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 260
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh21",
+                "zh2",
+                "zh31",
+                "zh3"
+              ],
+              "power_total": 440
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 120
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "kbs1",
+                "kbs2",
+                "kbs3",
+                "kbs4",
+                "kbs",
+                "cbs1",
+                "cbs2",
+                "cbs",
+                "cbs3"
+              ],
+              "power_total": 1080
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh11",
+                "sh2",
+                "sh21",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "killerbee": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 11.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz1",
+                "tz"
+              ],
+              "power_total": 100
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 170
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj22",
+                "kj2"
+              ],
+              "power_total": 230
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh13",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 405
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs2",
+                "bs3",
+                "bs"
+              ],
+              "power_total": 270
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 415
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "kimimaro": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 11.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz2",
+                "tz3"
+              ],
+              "power_total": 125
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 120
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj12",
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 135
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh31",
+                "zh3"
+              ],
+              "power_total": 300
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 40
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "kbs1",
+                "kbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs"
+              ],
+              "power_total": 900
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh21"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "konan": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk1",
+                "tk",
+                "tz",
+                "tz2",
+                "tz3",
+                "tz4"
+              ],
+              "power_total": 380
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 120
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 140
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh21",
+                "zh22",
+                "zh3",
+                "zh32"
+              ],
+              "power_total": 320
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 435
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "lee": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 100
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 120
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj11",
+                "kj2"
+              ],
+              "power_total": 180
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh11",
+                "zh2",
+                "zh21",
+                "zh3"
+              ],
+              "power_total": 350
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 380
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "kbs1",
+                "kbs",
+                "cbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs4"
+              ],
+              "power_total": 530
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 110
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5",
+                "k6"
+              ],
+              "power_total": 180
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj13",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 230
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 330
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs2",
+                "bs3",
+                "bs4",
+                "bs"
+              ],
+              "power_total": 200
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "kbs1",
+                "kbs2",
+                "kbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs"
+              ],
+              "power_total": 560
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "madara": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 14.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 150
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 240
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj13",
+                "kj2",
+                "kj22"
+              ],
+              "power_total": 300
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh12",
+                "zh1",
+                "zh2",
+                "zh22",
+                "zh3"
+              ],
+              "power_total": 360
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 40
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "sbs2",
+                "sbs3",
+                "cbs",
+                "cbs2",
+                "cbs3",
+                "kbs"
+              ],
+              "power_total": 1160
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 220
+            }
+          }
+        }
+      ]
+    },
+    "mayuri": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 6.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz1",
+                "tz"
+              ],
+              "power_total": 210
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k31",
+                "k3"
+              ],
+              "power_total": 180
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 160
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh31",
+                "zh3"
+              ],
+              "power_total": 430
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs2",
+                "bs3",
+                "bs4",
+                "bs5",
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 390
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "naruto": {
+      "n_forms": 5,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 8.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 110
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2",
+                "kj22",
+                "kj23",
+                "kj24",
+                "kj25"
+              ],
+              "power_total": 230
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh32"
+              ],
+              "power_total": 130
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs3",
+                "bs"
+              ],
+              "power_total": 140
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs2",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs4",
+                "cbs"
+              ],
+              "power_total": 260
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh21",
+                "sh22"
+              ],
+              "power_total": 120
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 400
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh11",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 120
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs2"
+              ],
+              "power_total": 160
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs"
+              ],
+              "power_total": 850
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 2,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 120
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 155
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 340
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh32",
+                "zh33"
+              ],
+              "power_total": 250
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs2",
+                "bs"
+              ],
+              "power_total": 290
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs",
+                "cbs2",
+                "cbs3"
+              ],
+              "power_total": 1100
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 3,
+          "speed": 9.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz2",
+                "tz"
+              ],
+              "power_total": 90
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 130
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh21",
+                "zh3",
+                "zh31",
+                "zh33",
+                "zh32"
+              ],
+              "power_total": 335
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 90
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "kbs1",
+                "kbs2",
+                "kbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 610
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 4,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz1",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 200
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj13",
+                "kj2",
+                "kj21",
+                "kj23",
+                "kj22"
+              ],
+              "power_total": 300
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh11",
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh21",
+                "zh22",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 330
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1",
+                "bs2"
+              ],
+              "power_total": 45
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "kbs1",
+                "kbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 940
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "neji": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 8.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj11",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 138
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 230
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 180
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs",
+                "cbs2",
+                "cbs3",
+                "cbs1"
+              ],
+              "power_total": 360
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh21",
+                "sh22"
+              ],
+              "power_total": 120
+            }
+          }
+        }
+      ]
+    },
+    "obito": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tk1"
+              ],
+              "power_total": 100
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 190
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 140
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh31",
+                "zh32"
+              ],
+              "power_total": 191
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 50
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "sbs2",
+                "sbs3",
+                "sbs4",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 380
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23"
+              ],
+              "power_total": 150
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 13.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tk1",
+                "tz"
+              ],
+              "power_total": 160
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 220
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2",
+                "kj13",
+                "kj14"
+              ],
+              "power_total": 1080
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh21",
+                "zh3",
+                "zh33"
+              ],
+              "power_total": 310
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1",
+                "bs2",
+                "bs3",
+                "bs4"
+              ],
+              "power_total": 270
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "kbs1",
+                "kbs",
+                "cbs2",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 761
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "orihime": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 6.5,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 120
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 130
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 110
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh22",
+                "zh3"
+              ],
+              "power_total": 430
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 270
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs5",
+                "cbs"
+              ],
+              "power_total": 360
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh21"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "orochimaru": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tk2",
+                "tz"
+              ],
+              "power_total": 180
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj11",
+                "kj2"
+              ],
+              "power_total": 190
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh21",
+                "zh3"
+              ],
+              "power_total": 300
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs4",
+                "cbs41",
+                "cbs5"
+              ],
+              "power_total": 820
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "pain": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tz",
+                "tk",
+                "tk2"
+              ],
+              "power_total": 150
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 160
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh13",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 290
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 260
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "sbs2",
+                "sbs3",
+                "sbs4",
+                "sbs5",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 500
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "renji": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 8.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz2"
+              ],
+              "power_total": 200
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 80
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 200
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 210
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1",
+                "bs2"
+              ],
+              "power_total": 250
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 460
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "rukia": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 6.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 160
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 120
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 260
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 280
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "kbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 710
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 9.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 120
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj11",
+                "kj1",
+                "kj2",
+                "kj21"
+              ],
+              "power_total": 165
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 270
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 280
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs",
+                "cbs2"
+              ],
+              "power_total": 650
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh21",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "sakura": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 6.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz1",
+                "tz"
+              ],
+              "power_total": 150
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 130
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj12",
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 200
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3",
+                "zh31",
+                "zh32"
+              ],
+              "power_total": 510
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 230
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "kbs2",
+                "kbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 440
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "sasuke": {
+      "n_forms": 3,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 8.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 90
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 130
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 220
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 290
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs"
+              ],
+              "power_total": 715
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 160
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj2",
+                "kj1"
+              ],
+              "power_total": 180
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 280
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs",
+                "bs2"
+              ],
+              "power_total": 120
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 780
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 2,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 160
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4",
+                "k5"
+              ],
+              "power_total": 220
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj11",
+                "kj12",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 210
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh11",
+                "zh2",
+                "zh21",
+                "zh22",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 350
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 280
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "kbs",
+                "cbs1",
+                "cbs2",
+                "cbs3",
+                "cbs"
+              ],
+              "power_total": 860
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "soifon": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 170
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 100
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 330
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs2"
+              ],
+              "power_total": 800
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs2",
+                "sbs3",
+                "sbs",
+                "cbs",
+                "kbs",
+                "kbs2",
+                "kbs3"
+              ],
+              "power_total": 774
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh10",
+                "sh1",
+                "sh20",
+                "sh2"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "starrk": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 13.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tz",
+                "tk"
+              ],
+              "power_total": 140
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 180
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 270
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh22",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 440
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 100
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs2",
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 510
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "temari": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 9.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz1"
+              ],
+              "power_total": 130
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 160
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 220
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3",
+                "zh31"
+              ],
+              "power_total": 230
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 296
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "toushirou": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 8.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz",
+                "tz1",
+                "tz2",
+                "tz3"
+              ],
+              "power_total": 380
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 140
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 220
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh12",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 140
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs2"
+              ],
+              "power_total": 150
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs1",
+                "sbs2",
+                "sbs",
+                "cbs1",
+                "cbs"
+              ],
+              "power_total": 460
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 110
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 120
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj2"
+              ],
+              "power_total": 250
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh21",
+                "zh22",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 210
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs",
+                "bs1"
+              ],
+              "power_total": 250
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs1",
+                "cbs",
+                "cbs2",
+                "cbs3"
+              ],
+              "power_total": 700
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "ulquiorra": {
+      "n_forms": 2,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 12.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 200
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3"
+              ],
+              "power_total": 120
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj12",
+                "kj2"
+              ],
+              "power_total": 270
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 260
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 280
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "sbs1",
+                "kbs",
+                "cbs",
+                "cbs2"
+              ],
+              "power_total": 420
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        },
+        {
+          "form_index": 1,
+          "speed": 14.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 200
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k4"
+              ],
+              "power_total": 220
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj21",
+                "kj22",
+                "kj2"
+              ],
+              "power_total": 300
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 470
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs1",
+                "bs"
+              ],
+              "power_total": 90
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "kbs1",
+                "kbs",
+                "cbs1",
+                "cbs2",
+                "cbs"
+              ],
+              "power_total": 1090
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    },
+    "uryuu": {
+      "n_forms": 1,
+      "forms": [
+        {
+          "form_index": 0,
+          "speed": 10.0,
+          "triggers": {
+            "catch1": {
+              "key": "←/→+J",
+              "qi": 0,
+              "ids": [
+                "tk",
+                "tz"
+              ],
+              "power_total": 100
+            },
+            "attack": {
+              "key": "J",
+              "qi": 0,
+              "ids": [
+                "k1",
+                "k2",
+                "k3",
+                "k31",
+                "k32"
+              ],
+              "power_total": 150
+            },
+            "attackAIR": {
+              "key": "空中J",
+              "qi": 0,
+              "ids": [
+                "kj1",
+                "kj2"
+              ],
+              "power_total": 200
+            },
+            "zhao1": {
+              "key": "U",
+              "qi": 0,
+              "ids": [
+                "zh1",
+                "zh21",
+                "zh2",
+                "zh3"
+              ],
+              "power_total": 430
+            },
+            "bisha": {
+              "key": "I",
+              "qi": 100,
+              "ids": [
+                "bs"
+              ],
+              "power_total": 300
+            },
+            "bishaSUPER": {
+              "key": "↓+I",
+              "qi": 300,
+              "ids": [
+                "sbs",
+                "cbs",
+                "cbs1",
+                "cbs2"
+              ],
+              "power_total": 530
+            },
+            "hurt": {
+              "key": "受击",
+              "qi": 0,
+              "ids": [
+                "sh1",
+                "sh12",
+                "sh2",
+                "sh22",
+                "sh23"
+              ],
+              "power_total": 200
+            }
+          }
+        }
+      ]
+    }
+  }
+}

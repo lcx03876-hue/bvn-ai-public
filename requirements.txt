@@ -1,0 +1,28 @@
+# BVN-AI dependencies (Python 3.10+; developed on 3.14)
+#
+#   pip install -r requirements.txt
+#
+# Which package is needed for what:
+#
+#   numpy         everything (observations, datasets, analysis)
+#   torch         layer 4, training (behaviour cloning + RL fine-tune).
+#                 CPU-only wheels are fine.
+#   onnx          layer 5, exporting the trained policy
+#   onnxruntime   layer 6, real-time inference (this is the only one needed
+#                 to *run* a trained model)
+#   pymem         only for the legacy `--real` memory-reading backend, which
+#                 does not work on this game (see docs/ARCHITECTURE.md).
+#                 Safe to skip if you only use `--bridge`.
+#   Pillow        panel field detection + saving diagnostic screenshots
+#   av            optional, only for `grab_video_frames.py`
+
+numpy>=1.24
+torch>=2.2
+onnx>=1.16
+onnxruntime>=1.17
+Pillow>=10.0
+
+# Legacy memory-scanning backend (optional; not functional on BVN)
+# pymem>=1.13
+
+# Tests: pytest>=7, or just run the files in tests/ directly
