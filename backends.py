@@ -72,7 +72,10 @@ def require_foreground(keyword: str | None) -> None:
 
 
 def build_backends(args: argparse.Namespace, need_input: bool = True) -> Backends:
-    if getattr(args, "mock", False):
+    # An explicit --bridge must win over the mock default. Without this guard a
+    # collection script played the in-process mock game while its log reported a
+    # healthy bridge connection.
+    if getattr(args, "mock", False) and not getattr(args, "bridge", False):
         from mock_game import MockGame, MockInput
 
         lag = getattr(args, "input_lag", None)
@@ -200,7 +203,18 @@ def add_backend_args(parser: argparse.ArgumentParser, default_mock: bool = True)
 
 
 def resolve_mode(args: argparse.Namespace) -> argparse.Namespace:
-    """When --mock/--real is not given explicitly, use the default (mock by default, never touch the real game)."""
+    """When --mock/--real is not given explicitly, use the default (mock by default, never touch the real game).
+
+    --bridge is a third mode: state comes from the JSON written by the injected
+    AS3 bridge. argparse keeps it in the same mutually exclusive group as
+    --mock/--real, so it never shows up on ``args.mock`` / ``args.real``.
+    Checking only those two fields silently downgraded --bridge to mock: the
+    script ran, the log added only "defaulting to mock", and every recorded
+    frame came from the in-process mock game instead of the real one.
+    """
+    if getattr(args, "bridge", None):
+        args.mock = False
+        return args
     if getattr(args, "mock", None) is None and getattr(args, "real", None) is None:
         args.mock = bool(getattr(args, "_default_mock", True))
         if args.mock:
