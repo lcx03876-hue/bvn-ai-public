@@ -40,3 +40,6 @@ desktop.ini
 
 # ---- git helper ----
 .git-msg.tmp
+
+# ---- generated doc preview (see render_preview.py) ----
+preview/
