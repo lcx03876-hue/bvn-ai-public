@@ -48,6 +48,24 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
 
+
+    # ------------------------------------------------------------------
+    # Which game build are these anchors from? The patches match anchor
+    # text, so a different build can silently mis-apply. Report it up
+    # front instead of only failing with "anchor not found".
+    # ------------------------------------------------------------------
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(HERE.parent))
+        from game_version import check as _gv_check
+        _gv_ok, _gv_msg = _gv_check()
+        print(_gv_msg.split("\n")[0])
+        for _line in _gv_msg.split("\n")[1:]:
+            if _line.strip():
+                print(_line)
+        print()
+    except Exception as _exc:      # noqa: BLE001
+        print(f"(game version check skipped: {_exc})")
     src = Path(args.src) if args.src else find_source()
     if src is None or not src.exists():
         print("error: GameStartCtrler.as not found. Decompile your SWF first, "

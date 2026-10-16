@@ -15,7 +15,7 @@ real match.
 |---|---|
 | OS | Windows (the input injection and window handling are Windows-specific) |
 | Python | 3.10+ (developed on 3.14) |
-| Game | *死神vs火影 绊 - 开放*, running as its own `.exe` |
+| Game | *死神vs火影 绊 - 开放* **3.0.0** (`V3.x 开放BVN`, AIR id `net.play5d.obvn`), running as its own `.exe` |
 | FFDec | [JPEXS Free Flash Decompiler](https://github.com/jindrapetrik/jpexs-decompiler), CLI build |
 | ADB / Android | not needed |
 
@@ -64,6 +64,25 @@ already excludes it.
 ---
 
 ## 3. Apply the patches
+
+### Check your game version first
+
+```bash
+python game_version.py
+```
+
+This project was built and measured against game version **3.0.0**
+(`V3.x 开放BVN`, AIR id `net.play5d.obvn`). The patchers match anchor text in the
+decompiled ActionScript, so a different build may need anchor updates. The
+report tells you what you have and flags a mismatch; the patchers print the same
+summary before they run.
+
+You can also check a specific SWF, which is useful for confirming you have an
+untouched original before patching:
+
+```bash
+python game_version.py --swf /path/to/FighterTester.swf
+```
 
 These scripts modify *your* decompiled sources, then rebuild and install the
 patched SWF.

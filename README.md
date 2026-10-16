@@ -11,6 +11,13 @@ against the real game running on Windows.
 > while the major version is `0` the observation layout, action set, CLI flags
 > and run-directory format may still change between minor releases.
 
+> **Tested game build: `3.0.0`** (`V3.x 开放BVN`, AIR id `net.play5d.obvn`).
+> Every measurement in [`docs/RESULTS.md`](docs/RESULTS.md) was taken on it. The
+> patchers match anchor text in the decompiled ActionScript, so a different game
+> build may need anchor updates — run `python game_version.py` to see what you
+> have. The original SWF used here is 3,083,259 bytes, SHA-256
+> `4F9C2BB2…FBCD026`.
+
 > **Headline result.** A behaviour-cloned policy that is then improved with
 > DAgger + offline-RL fine-tuning **beats the hand-written rule policy it was
 > cloned from** — 4 wins / 0 losses at difficulty level 3, net damage **+1132**

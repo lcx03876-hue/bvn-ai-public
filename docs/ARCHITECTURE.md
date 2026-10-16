@@ -60,6 +60,7 @@ collide, and a crashed process leaves no half-open connection behind.
 | `aeFrame` / `aeFrames` | frame when input became enabled / frames since |
 | `roundNo`, `p1Wins`, `p2Wins` | best-of-3 bookkeeping |
 | `aiLevel`, `aiModel` | confirms the difficulty patch actually took effect |
+| `gameVer` | `MainGame.VERSION` from the game itself (`V3.x 开放BVN`), so any logged result can be tied to a game build |
 | `p1Id`, `p2Id`, `p1Sel`, `p2Sel` | character and assist IDs, read from data |
 | per-fighter `hp hpMax qi energy x y actionState direct isInAir isAlive speed` | the actual state |
 

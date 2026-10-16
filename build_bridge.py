@@ -286,7 +286,12 @@ EXPORT_METHOD = '''
                // runtime AI level -- used to confirm whether set_difficulty actually took effect.
                // config.AI_level = the one hard-coded in FighterTester;
                // MessionModel.AI_LEVEL = the one actually passed into FighterAICtrler (assigned at character select).
-               + ",\\"aiLevel\\":" + GameData.I.config.AI_level
+               // Game build, straight from the game: MainGame.VERSION is
+            // "V3.x 开放BVN" on the build this project targets. Recorded in
+            // every snapshot so a result can always be tied to a game build.
+            // bvnQuoted is the existing string quoter defined above.
+            + ",\\"gameVer\\":" + bvnQuoted(MainGame.VERSION)
+            + ",\\"aiLevel\\":" + GameData.I.config.AI_level
                + ",\\"aiModel\\":" + MessionModel.I.AI_LEVEL
                + ",\\"mode\\":" + GameMode.currentMode
                // ★ the official best-of-three score ★

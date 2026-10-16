@@ -33,6 +33,19 @@ built-in Naruto AI.
 
 ### Added
 
+- **Game version tracking.** `game_version.py` reads the AIR descriptor
+  (`META-INF/AIR/application.xml` -> `3.0.0`, id `net.play5d.obvn`), the in-game
+  `MainGame.VERSION` constant (`V3.x 开放BVN`) and the SWF SHA-256, then reports
+  whether the installed build is the one this project was measured on. The game
+  patchers print that summary before touching anything, and the injected bridge
+  exports `gameVer` in every state snapshot.
+
+  This matters because the patches match **anchor text** in the decompiled
+  source: a different game build can leave an anchor missing, or present in a
+  different context. The pristine original used here is 3,083,259 bytes,
+  SHA-256 `4F9C2BB2E36F42FAE02B233CBB39EEA93DBF12AB156D9B479BB042940FBCD026`
+  (identified by the absence of any bridge code).
+
 - **Layer 1 — state reader.** ActionScript injected into `GameCtrler.render()`
   writes a JSON snapshot of both fighters to disk every 2nd frame (30 Hz at
   60 FPS). Exposes `hp`, `qi`, `x`, `y`, `actionState`, facing, air state,

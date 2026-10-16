@@ -61,6 +61,24 @@ def main() -> int:
                     help="report what would change, do not write")
     args = ap.parse_args()
 
+
+    # ------------------------------------------------------------------
+    # Which game build are these anchors from? The patches match anchor
+    # text, so a different build can silently mis-apply. Report it up
+    # front instead of only failing with "anchor not found".
+    # ------------------------------------------------------------------
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(HERE.parent))
+        from game_version import check as _gv_check
+        _gv_ok, _gv_msg = _gv_check()
+        print(_gv_msg.split("\n")[0])
+        for _line in _gv_msg.split("\n")[1:]:
+            if _line.strip():
+                print(_line)
+        print()
+    except Exception as _exc:      # noqa: BLE001
+        print(f"(game version check skipped: {_exc})")
     src = Path(args.src)
     if not src.exists():
         print(f"error: {src} not found.", file=sys.stderr)
