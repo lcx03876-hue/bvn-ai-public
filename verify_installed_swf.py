@@ -27,7 +27,12 @@ from bvn_paths import ffdec as _ffdec_resolve
 FFDEC = _ffdec_resolve()
 # Resolved from BVN_GAME_DIR (or ./game).
 from bvn_paths import game_swf as _game_swf_resolve
-DEFAULT_SWF = _game_swf_resolve()
+
+def _resolve_game_swf():
+    """Resolve this path on demand, so --help works without the game."""
+    return _game_swf_resolve()
+
+
 
 CHECKS = [
     ("GameCtrler", "GameCtrler.as",
@@ -45,8 +50,10 @@ CHECKS = [
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--swf", default=str(DEFAULT_SWF))
+    # default=None: resolving here would run before --help is handled
+    ap.add_argument("--swf", default=None)
     args = ap.parse_args()
+    swf_path = Path(args.swf) if swf_path else _resolve_game_swf()
 
     swf = Path(args.swf)
     if not swf.exists():

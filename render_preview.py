@@ -28,6 +28,7 @@ OUT = ROOT / "preview"
 # Documents to render, in navigation order.
 DOCS = [
     ("README.md", "index.html", "Overview"),
+    ("CHANGELOG.md", "changelog.html", "Changelog"),
     ("docs/GETTING_STARTED.md", "getting-started.html", "Getting started"),
     ("docs/ARCHITECTURE.md", "architecture.html", "Architecture"),
     ("docs/RESULTS.md", "results.html", "Results"),

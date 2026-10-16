@@ -23,6 +23,8 @@ Usage::
 
 from __future__ import annotations
 
+from version import __version__ as _BVN_VERSION
+
 import argparse
 import json
 import statistics
@@ -149,6 +151,8 @@ def ensure_vs_cpu(hwnd: int, attempts: int = 2) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=f"bvn-ai {_BVN_VERSION}")
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--seconds", type=float, default=120.0)
     ap.add_argument("--policy", choices=["rule", "air_chase", "onnx"], default="rule")

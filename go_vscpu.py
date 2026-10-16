@@ -34,6 +34,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from version import __version__ as _BVN_VERSION  # noqa: E402
+
 from focus_window import force_foreground  # noqa: E402
 from input_controller import (  # noqa: E402
     InputController, activate_window, click_client, find_window,
@@ -53,6 +55,8 @@ VK_F2 = 0x71          # F2 = toggle between CPU battle (22) / practice mode (40)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=f"bvn-ai {_BVN_VERSION}")
     ap.add_argument("--p1", default="ichigo")
     ap.add_argument("--p2", default="naruto")
     ap.add_argument("--p1-fz", default="kon")

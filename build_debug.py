@@ -15,10 +15,19 @@ import sys
 import time
 from pathlib import Path
 
+# Imported after the module docstring: a statement before it would turn the
+# docstring into a plain expression and leave __doc__ as None.
+from version import __version__ as _BVN_VERSION
+
 ROOT = Path(__file__).resolve().parent
 # Resolved from BVN_GAME_DIR (or ./game).
 from bvn_paths import game_dir as _game_dir_resolve
-GAME_DIR = _game_dir_resolve()
+
+def _resolve_game_dir():
+    """Resolve this path on demand, so --help works without the game."""
+    return _game_dir_resolve()
+
+
 # Resolved from the FFDEC env var, or the usual install locations.
 from bvn_paths import ffdec as _ffdec_resolve
 FFDEC = _ffdec_resolve()
@@ -42,6 +51,8 @@ def main() -> int:
     """Rebuild the SWF from all patches, then install it."""
     import argparse
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--version", action="version",
+                    version=f"bvn-ai {_BVN_VERSION}")
     ap.add_argument("--no-install", action="store_true",
                     help="build only; do not replace the game's SWF")
     args = ap.parse_args()
@@ -49,7 +60,7 @@ def main() -> int:
     subprocess.run(["taskkill", "/F", "/IM", "FighterTester.exe"], capture_output=True)
     time.sleep(2)
 
-    base = GAME_DIR / "FighterTester.swf"
+    base = _resolve_game_dir() / "FighterTester.swf"
     print(f"[dbg] baseline SWF: {base} ({base.stat().st_size} bytes)")
 
     # 1) generate GameCtrler.bridge.as
@@ -99,9 +110,9 @@ def main() -> int:
     #   -> new patches could never reach the game (only after two "missing" runs on the real machine).
     #   To build without installing: `python build_debug.py --no-install`
     if not args.no_install:
-        dst = GAME_DIR / "FighterTester.swf"
+        dst = _resolve_game_dir() / "FighterTester.swf"
         if dst.exists():
-            shutil.copy2(dst, GAME_DIR / "FighterTester.prev.swf")
+            shutil.copy2(dst, _resolve_game_dir() / "FighterTester.prev.swf")
         shutil.copy2(cur, dst)
         print(f"[dbg] ✅ installed as {dst.name} ({dst.stat().st_size} bytes)")
         print("[dbg] ⚠️ difficulty will be reset — remember to run:")

@@ -25,6 +25,8 @@ Usage::
 
 from __future__ import annotations
 
+from version import __version__ as _BVN_VERSION
+
 import argparse
 import random
 import signal
@@ -1845,6 +1847,8 @@ def report(episode: Episode) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stage 3: 60Hz data collection")
+    parser.add_argument("--version", action="version",
+                        version=f"bvn-ai {_BVN_VERSION}")
     parser.add_argument("--seconds", type=float, default=60.0, help="collection duration (seconds)")
     parser.add_argument("--policy", choices=sorted(POLICIES), default="random", help="action policy")
     parser.add_argument("--name", default="", help="output file name (timestamped by default)")

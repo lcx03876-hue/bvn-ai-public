@@ -1,9 +1,15 @@
 # BVN-AI — a full AI loop for *Bleach vs Naruto*
 
+**Version 0.1.0** · [Changelog](CHANGELOG.md) · MIT (see [NOTICE](NOTICE) for the game)
+
 A complete, working AI stack for the Flash/AIR fighting game
 **死神vs火影 绊 - 开放** (*Bleach vs Naruto*, by 5DPLAY Game Studio):
 **read state → collect → train → export → infer → inject input**, all verified
 against the real game running on Windows.
+
+> **Status: 0.x.** The loop works end to end and the numbers below are real, but
+> while the major version is `0` the observation layout, action set, CLI flags
+> and run-directory format may still change between minor releases.
 
 > **Headline result.** A behaviour-cloned policy that is then improved with
 > DAgger + offline-RL fine-tuning **beats the hand-written rule policy it was

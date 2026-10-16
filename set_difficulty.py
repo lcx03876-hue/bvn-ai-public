@@ -43,9 +43,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 # Resolved from BVN_GAME_DIR (or ./game).
 from bvn_paths import game_dir as _game_dir_resolve
-GAME_DIR = _game_dir_resolve()
-SWF_CUR = GAME_DIR / "FighterTester.swf"
-SWF_HELL = GAME_DIR / "FighterTester.hell.swf"      # Hell-version backup
+
+def _resolve_game_dir():
+    """Resolve this path on demand, so --help works without the game."""
+    return _game_dir_resolve()
+
+
+def _swf_cur() -> Path:
+    """Lazily resolve the currently installed SWF."""
+    return _resolve_game_dir() / "FighterTester.swf"
+
+def _swf_hell() -> Path:
+    """Lazily resolve the hell-difficulty backup."""
+    return _resolve_game_dir() / "FighterTester.hell.swf"
+
+
+
 # Resolved from the FFDEC env var, or the usual install locations.
 from bvn_paths import ffdec as _ffdec_resolve
 FFDEC = _ffdec_resolve()
@@ -120,9 +133,9 @@ def main() -> int:
     print(f"[diff]   wrote {TMP_AS}")
 
     # On the first run, back up the current (Hell-version) SWF so --restore is possible
-    if not SWF_HELL.exists() and SWF_CUR.exists():
-        shutil.copy2(SWF_CUR, SWF_HELL)
-        print(f"[diff] backed up the current (Hell-version) SWF -> {SWF_HELL.name}")
+    if not _swf_hell().exists() and _swf_cur().exists():
+        shutil.copy2(_swf_cur(), _swf_hell())
+        print(f"[diff] backed up the current (Hell-version) SWF -> {_swf_hell().name}")
 
     # ★ must be based on the **currently installed SWF** ★
     #   Do not use FighterTester.hell.swf: measured, that file was copied from the
@@ -133,8 +146,8 @@ def main() -> int:
     #   Advantage of using FighterTester.swf as the base: it already carries the
     #   bridge, so the recompiled output naturally still carries the bridge
     #   (`GameCtrler` is not in the replacement list, so it never gets touched).
-    src_swf = SWF_CUR
-    out_swf = GAME_DIR / f"FighterTester.lv{args.level}.swf"
+    src_swf = _swf_cur()
+    out_swf = _resolve_game_dir() / f"FighterTester.lv{args.level}.swf"
     print(f"[diff] base SWF = {src_swf.name} (currently installed, bridge included)")
     cmd = [str(FFDEC), "-replace", str(src_swf), str(out_swf),
            SCRIPT_NAME, str(TMP_AS)]
@@ -154,7 +167,7 @@ def main() -> int:
         import time
 
         time.sleep(2)
-        shutil.copy2(out_swf, SWF_CUR)
+        shutil.copy2(out_swf, _swf_cur())
         print(f"[diff] installed as FighterTester.swf -- please reopen the game")
         print(f"[diff] verify: after entering a match, the bridge's aiLevel / aiModel fields should both read {args.level}")
     else:

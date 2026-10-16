@@ -35,10 +35,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 # Resolved from the BVN_GAME_DIR env var, or ./game
 from bvn_paths import game_dir as _game_dir_resolve
-GAME_DIR = _game_dir_resolve()
-SWF_IN = GAME_DIR / "FighterTester.swf"
-SWF_BAK = GAME_DIR / "FighterTester.swf.orig"
-SWF_OUT = GAME_DIR / "FighterTester.bridge.swf"
+
+def _resolve_game_dir():
+    """Resolve this path on demand, so --help works without the game."""
+    return _game_dir_resolve()
+
+
+def _swf_in() -> Path:
+    """Lazily resolve the installed SWF to patch."""
+    return _resolve_game_dir() / "FighterTester.swf"
+
+def _swf_bak() -> Path:
+    """Lazily resolve the pristine backup of it."""
+    return _resolve_game_dir() / "FighterTester.swf.orig"
+
+def _swf_out() -> Path:
+    """Lazily resolve the bridge output SWF."""
+    return _resolve_game_dir() / "FighterTester.bridge.swf"
+
+
+
 # Resolved from the FFDEC env var, or the usual install locations.
 from bvn_paths import ffdec as _ffdec_resolve
 FFDEC = _ffdec_resolve()
@@ -418,17 +434,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="build the state-export bridge SWF")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--restore", action="store_true")
-    parser.add_argument("--swf-in", default=str(SWF_IN))
-    parser.add_argument("--swf-out", default=str(SWF_OUT))
+    # default=None: resolving the real paths here would run while the parser is
+    # being built, i.e. before --help is handled, so the script could not print
+    # usage on a machine without the game installed.
+    parser.add_argument("--swf-in", default=None)
+    parser.add_argument("--swf-out", default=None)
     args = parser.parse_args(argv)
 
-    swf_in, swf_out = Path(args.swf_in), Path(args.swf_out)
+    swf_in = Path(args.swf_in) if args.swf_in else _swf_in()
+    swf_out = Path(args.swf_out) if args.swf_out else _swf_out()
 
     if args.restore:
-        if not SWF_BAK.exists():
-            print(f"no backup at {SWF_BAK}")
+        if not _swf_bak().exists():
+            print(f"no backup at {_swf_bak()}")
             return 1
-        shutil.copy2(SWF_BAK, swf_in)
+        shutil.copy2(_swf_bak(), swf_in)
         print(f"restored {swf_in} from the backup")
         return 0
 
@@ -472,9 +492,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # back up the original SWF (back up only once, so a patched build is never mistaken for the original)
-    if not SWF_BAK.exists():
-        shutil.copy2(swf_in, SWF_BAK)
-        print(f"[bridge] backed up the original SWF -> {SWF_BAK}")
+    if not _swf_bak().exists():
+        shutil.copy2(swf_in, _swf_bak())
+        print(f"[bridge] backed up the original SWF -> {_swf_bak()}")
 
     cmds: list[list[str]] = [
         [str(FFDEC), "-replace", str(swf_in), str(swf_out),

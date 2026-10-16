@@ -33,6 +33,8 @@ Usage::
 
 from __future__ import annotations
 
+from version import __version__ as _BVN_VERSION
+
 import argparse
 import json
 import subprocess
@@ -77,9 +79,11 @@ def save_cfg(cfg: dict) -> None:
 
 
 
-# Resolved from BVN_GAME_DIR (or ./game).
+# Resolved from BVN_GAME_DIR (or ./game) **lazily**.
+#   Resolving at import time would make `--help` / `--version` fail on a
+#   machine that does not have the game installed -- every CLI must be
+#   able to print its usage anywhere.
 from bvn_paths import game_exe as _game_exe_resolve
-GAME_EXE = _game_exe_resolve()
 
 
 def _ensure_game(wait_s: float = 100.0) -> bool:
@@ -87,11 +91,12 @@ def _ensure_game(wait_s: float = 100.0) -> bool:
     from input_controller import find_window  # local import, avoids top-level side effects
     if find_window("火影"):
         return True
-    if not GAME_EXE.exists():
-        print(f"[play] ❌ game not found {GAME_EXE}")
+    game_exe = _game_exe_resolve()
+    if not game_exe.exists():
+        print(f"[play] ❌ game not found {game_exe}")
         return False
-    print(f"[play] game not running -> launching {GAME_EXE.name}")
-    subprocess.Popen([str(GAME_EXE)], cwd=str(GAME_EXE.parent))
+    print(f"[play] game not running -> launching {game_exe.name}")
+    subprocess.Popen([str(game_exe)], cwd=str(game_exe.parent))
     import time
     t0 = time.time()
     while time.time() - t0 < wait_s:
@@ -117,6 +122,8 @@ def main() -> int:
     cfg = load_cfg()
     ap = argparse.ArgumentParser(
         description="start a match and fight with one command (the config is written once)")
+    ap.add_argument("--version", action="version",
+                    version=f"bvn-ai {_BVN_VERSION}")
     ap.add_argument("--p1", default=cfg["p1"])
     ap.add_argument("--p2", default=cfg["p2"])
     ap.add_argument("--p1-fz", dest="p1_fz", default=cfg["p1_fz"])

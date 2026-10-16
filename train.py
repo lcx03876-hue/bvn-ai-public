@@ -26,6 +26,8 @@ Usage::
 
 from __future__ import annotations
 
+from version import __version__ as _BVN_VERSION
+
 import argparse
 import glob
 import json
@@ -498,6 +500,8 @@ def evaluate_checkpoints(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stage 4: BC + DQN training")
+    parser.add_argument("--version", action="version",
+                        version=f"bvn-ai {_BVN_VERSION}")
     parser.add_argument("--data", nargs="+", default=[str(DATA_DIR / "*.npz")],
                         help="npz files / directories / globs (multiple allowed)")
     parser.add_argument("--name", default="", help="run name (timestamped by default)")
