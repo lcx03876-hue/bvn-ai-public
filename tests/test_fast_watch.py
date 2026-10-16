@@ -1,8 +1,9 @@
-"""自检 watch_fast 的向量化读写逻辑（用合成内存，不需要真游戏）。
+"""Self-checks for watch_fast's vectorised read/write logic (uses synthetic memory, no real game needed).
 
-这块代码出错的方式很隐蔽：地址算错 1 个元素、类型搞混、numpy 视图步长不对，
-都会导致"读回来的是隔壁字段的值"，而扫描结果看起来还挺像那么回事。
-所以用已知答案的合成内存钉死它。
+This code fails in very sneaky ways: an address off by 1 element, a mixed-up type,
+a wrong numpy view stride -- any of them means "what you read back is the neighbouring
+field's value", while the scan results still look plausible. So we pin it down with
+synthetic memory whose answers we already know.
 """
 
 from __future__ import annotations
@@ -30,11 +31,11 @@ def make_snapshot(buf: bytes, base: int = 0x1000) -> MemorySnapshot:
 
 
 def test_collect_and_gather_roundtrip() -> None:
-    # 布局（4 字节对齐）：
-    #   0x1000: int32 500      <- 该被 int32 扫到
-    #   0x1004: int32 1200     <- 该被 int32 扫到
-    #   0x1008: float 250.5    <- 该被 float 扫到
-    #   0x100C: int32 999999   <- 超出值域，不该被扫到
+    # Layout (4-byte aligned):
+    #   0x1000: int32 500      <- int32 scan should hit it
+    #   0x1004: int32 1200     <- int32 scan should hit it
+    #   0x1008: float 250.5    <- float scan should hit it
+    #   0x100C: int32 999999   <- out of range, must not be hit
     buf = (
         struct.pack("<i", 500)
         + struct.pack("<i", 1200)
@@ -48,17 +49,18 @@ def test_collect_and_gather_roundtrip() -> None:
         chunks, bases, min_value=1, max_value=3000, want="both", max_candidates=1000
     )
     found = {int(a): (float(v), int(t)) for a, v, t in zip(addrs, vals, types)}
-    assert base + 0 in found, f"漏了 0x{base:08X}: {sorted(hex(a) for a in found)}"
-    assert base + 4 in found, "漏了 0x1004"
-    assert base + 8 in found, "漏了 0x1008（float）"
-    assert base + 12 not in found, "0x100C 超出值域不该被选中"
+    assert base + 0 in found, f"missed 0x{base:08X}: {sorted(hex(a) for a in found)}"
+    assert base + 4 in found, "missed 0x1004"
+    assert base + 8 in found, "missed 0x1008 (float)"
+    assert base + 12 not in found, "0x100C is out of range and must not be selected"
 
     assert found[base][1] == KIND_INT32 and found[base][0] == 500
     assert found[base + 4][0] == 1200
     assert found[base + 8][1] == KIND_FLOAT
     assert abs(found[base + 8][0] - 250.5) < 1e-4
 
-    # 值变了之后，gather 必须读回新值（这是盯盘的正确性基础）
+    # After the values change, gather must read back the new values
+    # (this is the correctness foundation of watching a value over time)
     buf2 = (
         struct.pack("<i", 350)
         + struct.pack("<i", 1200)
@@ -69,13 +71,13 @@ def test_collect_and_gather_roundtrip() -> None:
     ch2, ba2 = build_chunks(snap2)
     got = gather(ch2, ba2, addrs, types)
     back = {int(a): float(v) for a, v in zip(addrs, got)}
-    assert back[base] == 350, f"gather 读回 {back[base]}，应该是 350"
+    assert back[base] == 350, f"gather read back {back[base]}, expected 350"
     assert back[base + 4] == 1200
-    assert abs(back[base + 8] - 190.25) < 1e-4, f"float 读回 {back[base + 8]}"
+    assert abs(back[base + 8] - 190.25) < 1e-4, f"float read back {back[base + 8]}"
 
 
 def test_gather_missing_region_gives_nan() -> None:
-    """地址所在区域消失时必须给 NaN，而不是编个值出来。"""
+    """When the region holding an address disappears we must return NaN, not make up a value."""
     buf = struct.pack("<i", 700)
     snap = make_snapshot(buf, 0x2000)
     chunks, bases = build_chunks(snap)
@@ -87,18 +89,18 @@ def test_gather_missing_region_gives_nan() -> None:
     empty = MemorySnapshot([RegionDump(0x9000, struct.pack("<i", 1))])
     ch2, ba2 = build_chunks(empty)
     got = gather(ch2, ba2, addrs, types)
-    assert np.isnan(got[0]), f"区域消失应返回 NaN，实际 {got[0]}"
+    assert np.isnan(got[0]), f"a vanished region should return NaN, got {got[0]}"
 
 
 def test_multichunk_addresses() -> None:
-    """跨多个块时地址映射不能串块。"""
+    """Address mapping must not cross chunks when there are several."""
     part_a = struct.pack("<i", 111) + b"\x00" * 60
     part_b = struct.pack("<i", 222) + b"\x00" * 60
     snap = MemorySnapshot(
         [RegionDump(0x10000, part_a), RegionDump(0x50000, part_b)]
     )
     chunks, bases = build_chunks(snap)
-    assert bases == [0x10000, 0x50000], f"块基址不对: {[hex(b) for b in bases]}"
+    assert bases == [0x10000, 0x50000], f"wrong chunk bases: {[hex(b) for b in bases]}"
     addrs, vals, types = collect_candidates(chunks, bases, 1, 3000, "int32", 100)
     back = {int(a): float(v) for a, v in zip(addrs, vals)}
     assert back.get(0x10000) == 111, back
@@ -106,33 +108,35 @@ def test_multichunk_addresses() -> None:
 
 
 def test_drop_detection_on_series() -> None:
-    """下降/上升统计要能区分"血量"和"抖动计数器"。
+    """The drop/rise statistics must be able to tell "health" apart from "a jitter counter".
 
-    符号约定：``np.diff`` 得到 ``m[i+1] - m[i]``，所以**血量下降时差值为负**。
+    Sign convention: ``np.diff`` gives ``m[i+1] - m[i]``, so **a health drop shows up
+    as a negative difference**.
     """
-    # 血量：800 -> 700 -> 500 -> 400（三次下降，零上升）
+    # health: 800 -> 700 -> 500 -> 400 (three drops, zero rises)
     hp = np.array([[800.0], [700.0], [500.0], [400.0]])
     d = np.diff(hp, axis=0)
     drops = (d < -2.0).sum(axis=0)
     rises = (d > 2.0).sum(axis=0)
-    assert drops[0] == 3, f"应统计出 3 次下降，实际 {drops[0]}（差值为 {d.ravel()}）"
-    assert rises[0] == 0, f"不该有上升，实际 {rises[0]}"
-    assert ((-d)[d < -2.0]).sum() == 400.0, "累计降幅应为 100+200+100=400"
+    assert drops[0] == 3, f"should count 3 drops, got {drops[0]} (diffs are {d.ravel()})"
+    assert rises[0] == 0, f"there should be no rises, got {rises[0]}"
+    assert ((-d)[d < -2.0]).sum() == 400.0, "total drop should be 100+200+100=400"
 
-    # 抖动计数器：来回跳，上升和下降一样多 -> 应被 rise_ratio 排除
+    # jitter counter: bounces back and forth, as many rises as drops -> should be
+    # excluded by rise_ratio
     noise = np.array([[10.0], [90.0], [20.0], [80.0], [15.0]])
     d2 = np.diff(noise, axis=0)
     n_drops = (d2 < -2.0).sum(axis=0)[0]
     n_rises = (d2 > 2.0).sum(axis=0)[0]
-    assert n_drops == 2 and n_rises == 2, f"抖动序列应为 2 降 2 升，实际 {n_drops}/{n_rises}"
+    assert n_drops == 2 and n_rises == 2, f"the jitter series should give 2 drops / 2 rises, got {n_drops}/{n_rises}"
 
-    # 回满血（新一局）会让 rise_sum 变大 -> 也会被排除
+    # Healing back to full (a new round) inflates rise_sum -> also excluded
     restart = np.array([[800.0], [400.0], [800.0], [700.0]])
     d3 = np.diff(restart, axis=0)
     drop_sum = np.where(d3 < -2.0, -d3, 0.0).sum(axis=0)[0]
     rise_sum = np.where(d3 > 2.0, d3, 0.0).sum(axis=0)[0]
     assert drop_sum == 500.0 and rise_sum == 400.0, (drop_sum, rise_sum)
-    assert rise_sum > drop_sum * 0.25, "回满血应该触发'上升过多'的排除条件"
+    assert rise_sum > drop_sum * 0.25, "healing to full should trip the 'too much rise' exclusion"
 
 
 def _run_all() -> int:
@@ -148,7 +152,7 @@ def _run_all() -> int:
         except Exception as exc:  # noqa: BLE001
             failed += 1
             print(f"  ERROR {fn.__name__}: {type(exc).__name__}: {exc}")
-    print(f"\n{len(tests) - failed}/{len(tests)} 通过")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
     return 1 if failed else 0
 
 

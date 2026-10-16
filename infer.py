@@ -1,20 +1,21 @@
-"""阶段 6：推理闭环（读状态 → onnxruntime 推理 → SendInput），目标 60Hz。
+"""Stage 6: the inference loop (read state -> onnxruntime inference -> SendInput), target 60Hz.
 
-延迟是这条路线的生死线，所以每一步都单独计时：
+Latency is the make-or-break issue for this route, so every step is timed separately:
 
-    read     读内存
-    encode   状态编码 + 帧堆叠
-    infer    onnxruntime 推理
-    inject   SendInput 注入（含按键 hold 的等待时间）
-    total    整个 tick
+    read     read memory
+    encode   state encoding + frame stacking
+    infer    onnxruntime inference
+    inject   SendInput injection (including the wait time for a key hold)
+    total    the whole tick
 
-报告里除了均值还有 p50 / p95 / max 和"超预算帧数"。
-真机上跑完把 runs/latency_*.json 发给别人看，就知道该优化哪一步。
+Besides the mean, the report also has p50 / p95 / max and the "frames over budget" count.
+After running this on the real machine, send runs/latency_*.json to someone and it is
+obvious which step needs optimizing.
 
-用法::
+Usage::
 
-    python infer.py --run runs/smoke_bc --mock --seconds 20          # 离线验证推理链
-    python infer.py --run runs/demo --real --focus BVN --seconds 300  # 真机对战 CPU
+    python infer.py --run runs/smoke_bc --mock --seconds 20          # offline validation of the inference chain
+    python infer.py --run runs/demo --real --focus BVN --seconds 300  # real match against the CPU
     python infer.py --run runs/demo --onnx runs/demo/qnet.onnx --real --focus BVN
 """
 
@@ -48,14 +49,14 @@ from state import OBS_DIM, StateBuilder, compute_reward  # noqa: E402
 try:
     import onnxruntime as ort
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit("需要 onnxruntime：python -m pip install onnxruntime") from exc
+    raise SystemExit("onnxruntime is required: python -m pip install onnxruntime") from exc
 
 
-# ---------------------------------------------------------------- 模型
+# ---------------------------------------------------------------- model
 
 
 class OnnxPolicy:
-    """onnxruntime 推理包装。输入 (1, OBS_DIM) -> 动作下标。"""
+    """onnxruntime inference wrapper. Input (1, OBS_DIM) -> action index."""
 
     def __init__(
         self,
@@ -70,7 +71,7 @@ class OnnxPolicy:
             else ["CPUExecutionProvider"]
         )
         opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 1  # 单帧单样本，多线程反而更慢
+        opts.intra_op_num_threads = 1  # one sample per frame; multiple threads are actually slower
         opts.inter_op_num_threads = 1
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self.session = ort.InferenceSession(str(path), sess_options=opts, providers=providers)
@@ -82,7 +83,7 @@ class OnnxPolicy:
         self.obs_dim = int(shape[1]) if len(shape) > 1 and isinstance(shape[1], int) else None
 
     def infer(self, obs: np.ndarray) -> tuple[int, float]:
-        """返回 (动作下标, 推理耗时 ms)。"""
+        """Return (action index, inference time in ms)."""
         t0 = time.perf_counter()
         out = self.session.run(
             [self.output_name], {self.input_name: obs.reshape(1, -1).astype(np.float32)}
@@ -103,7 +104,7 @@ class OnnxPolicy:
             self.session.run([self.output_name], {self.input_name: dummy})
 
 
-# ---------------------------------------------------------------- 延迟统计
+# ---------------------------------------------------------------- latency stats
 
 
 @dataclass
@@ -112,14 +113,14 @@ class LatencyStats:
     encode: list[float] = field(default_factory=list)
     infer: list[float] = field(default_factory=list)
     inject: list[float] = field(default_factory=list)
-    work: list[float] = field(default_factory=list)  # 真正干活的时间（不含故意睡眠）
-    total: list[float] = field(default_factory=list)  # 整个 tick 的墙钟时间
+    work: list[float] = field(default_factory=list)  # time actually working (excludes deliberate sleep)
+    total: list[float] = field(default_factory=list)  # wall-clock time of the whole tick
     sleep: list[float] = field(default_factory=list)
     action_counts: list[int] = field(default_factory=lambda: [0] * len(ACTIONS))
     ticks: int = 0
     over_budget: int = 0
-    over_budget_hard: int = 0  # 超过 2 倍预算，说明这一帧肯定被游戏丢掉了
-    deadline_miss: int = 0  # 没睡够（工作就超了预算），实际帧率会掉
+    over_budget_hard: int = 0  # over 2x the budget: this frame was certainly dropped by the game
+    deadline_miss: int = 0  # not enough sleep left (work alone blew the budget), so the real frame rate drops
 
     def add(
         self,
@@ -193,14 +194,14 @@ class LatencyStats:
     def text(self) -> str:
         r = self.report()
         lines = [
-            f"帧数            : {r['ticks']}",
-            f"单帧预算        : {r['budget_ms']:.2f} ms (60Hz)，当前余量 {r['headroom_ms']:+.2f} ms",
+            f"frames          : {r['ticks']}",
+            f"per-frame budget: {r['budget_ms']:.2f} ms (60Hz), current headroom {r['headroom_ms']:+.2f} ms",
             "",
-            f"{'阶段':<8}{'均值':>9}{'p50':>9}{'p95':>9}{'最大':>9}   (ms)",
+            f"{'stage':<8}{'mean':>9}{'p50':>9}{'p95':>9}{'max':>9}   (ms)",
         ]
         for name, label in (
-            ("read", "读内存"), ("encode", "编码"), ("infer", "推理"),
-            ("inject", "注入"), ("work", "工作时"), ("total", "整帧"), ("sleep", "剩余睡"),
+            ("read", "read mem"), ("encode", "encode"), ("infer", "infer"),
+            ("inject", "inject"), ("work", "work"), ("total", "whole tick"), ("sleep", "sleep left"),
         ):
             s = r["stages_ms"][name]
             lines.append(
@@ -208,27 +209,27 @@ class LatencyStats:
             )
         lines += [
             "",
-            "说明：够不够快看『工作时』那一行（不含故意的睡眠）。"
-            "『整帧』≈ 预算，是被限速的结果，不代表慢。",
-            f"最慢的一步      : {r['bottleneck']} ({r['stage_means_ms'][r['bottleneck']]:.3f} ms)",
-            f"工作超预算帧    : {r['over_budget']} ({r['over_budget_pct']:.2f}%)",
-            f"严重超时(>2×)   : {r['over_budget_hard']}",
-            f"真正掉帧        : {r['deadline_miss']}（工作超过预算且没时间睡）",
+            "Note: whether it is fast enough is decided by the 'work' row (which excludes the "
+            "deliberate sleep). 'whole tick' ~= the budget: that is the rate limiting, not slowness.",
+            f"slowest step    : {r['bottleneck']} ({r['stage_means_ms'][r['bottleneck']]:.3f} ms)",
+            f"work over budget: {r['over_budget']} ({r['over_budget_pct']:.2f}%)",
+            f"badly over (>2x): {r['over_budget_hard']}",
+            f"actual dropped frames: {r['deadline_miss']} (work exceeded the budget so there was no time left to sleep)",
             "",
-            "动作分布        : " + ", ".join(
+            "action distribution: " + ", ".join(
                 f"{k}={v}" for k, v in r["action_counts"].items()
             ),
         ]
         if r["over_budget_pct"] > 5:
             lines.append("")
-            lines.append("掉帧超过 5%：按 bottleneck 那一项去优化 ——")
-            lines.append("  读内存慢 -> 减少读取字段、一次性大块读、或降低到 30Hz 决策（按键仍逐帧）")
-            lines.append("  推理慢   -> 换更小网络、opset 17、intra_op_num_threads=1、上 GPU")
-            lines.append("  注入慢   -> SendInput 每次按住不要超过 2 帧；合并按键为一次调用")
+            lines.append("More than 5% dropped frames: optimize whatever the bottleneck entry names --")
+            lines.append("  read mem slow -> read fewer fields, do one big bulk read, or drop to 30Hz decisions (keys still per-frame)")
+            lines.append("  infer slow    -> switch to a smaller network, opset 17, intra_op_num_threads=1, get a GPU")
+            lines.append("  inject slow   -> never hold SendInput for more than 2 frames at a time; merge keys into one call")
         return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- 主循环
+# ---------------------------------------------------------------- main loop
 
 
 def run_inference(args: argparse.Namespace) -> tuple[dict[str, Any], LatencyStats, Path]:
@@ -236,15 +237,15 @@ def run_inference(args: argparse.Namespace) -> tuple[dict[str, Any], LatencyStat
     onnx_path = Path(args.onnx) if args.onnx else default_onnx(args.run)
     if not onnx_path.exists():
         raise SystemExit(
-            f"找不到模型 {onnx_path}。先跑 export_onnx.py，或用 --onnx 指定路径。"
+            f"Model not found: {onnx_path}. Run export_onnx.py first, or point --onnx at a path."
         )
     policy = OnnxPolicy(
         onnx_path, provider=args.provider, greedy=not args.sample, seed=args.seed
     )
     if policy.obs_dim is not None and policy.obs_dim != OBS_DIM:
         raise SystemExit(
-            f"模型输入维度 {policy.obs_dim} != 当前 OBS_DIM {OBS_DIM}。"
-            "模型和代码版本不一致，重新训练/导出。"
+            f"Model input dim {policy.obs_dim} != current OBS_DIM {OBS_DIM}. "
+            "The model and the code versions do not match; retrain/re-export."
         )
     policy.warmup(20)
 
@@ -256,14 +257,14 @@ def run_inference(args: argparse.Namespace) -> tuple[dict[str, Any], LatencyStat
 
     def _on_sigint(_s: int, _f: Any) -> None:
         stopping["flag"] = True
-        print("\n[infer] 收到 Ctrl+C，正在收尾（松开按键）...")
+        print("\n[infer] got Ctrl+C, wrapping up (releasing keys)...")
 
     old = signal.signal(signal.SIGINT, _on_sigint)
-    print(f"[infer] 模型 = {onnx_path}")
-    print(f"[infer] 后端 = {backends.description}")
+    print(f"[infer] model = {onnx_path}")
+    print(f"[infer] backend = {backends.description}")
     print(
-        f"[infer] 目标 {args.hz:.0f}Hz，时长 {args.seconds:.0f}s，"
-        f"单帧预算 {LATENCY_BUDGET_MS:.2f} ms，{'贪心' if not args.sample else '采样'}决策"
+        f"[infer] target {args.hz:.0f}Hz, duration {args.seconds:.0f}s, "
+        f"per-frame budget {LATENCY_BUDGET_MS:.2f} ms, {'greedy' if not args.sample else 'sampled'} decisions"
     )
 
     total_reward = 0.0
@@ -298,7 +299,7 @@ def run_inference(args: argparse.Namespace) -> tuple[dict[str, Any], LatencyStat
                 episodes += 1
             last_frame = frame
 
-            # 限速到目标帧率：把剩下的时间睡掉，避免把 CPU 空转烧掉
+            # Throttle to the target frame rate: sleep the remaining time so we do not burn the CPU spinning
             target = t_start + (tick + 1) / args.hz
             sleep_ms = 0.0
             work_ms = (time.perf_counter() - tick_start) * 1000.0
@@ -317,8 +318,8 @@ def run_inference(args: argparse.Namespace) -> tuple[dict[str, Any], LatencyStat
                 print(
                     f"  t={time.perf_counter() - t_start:6.1f}s tick={tick:<6} "
                     f"a={ACTIONS[action]:<7} hp {frame.p1.hp:6.1f}/{frame.p2.hp:6.1f} "
-                    f"total={total_ms:5.2f}ms (读{read_ms:4.1f} 推{infer_ms:4.2f} "
-                    f"注{inject_ms:4.1f})"
+                    f"total={total_ms:5.2f}ms (read{read_ms:4.1f} inf{infer_ms:4.2f} "
+                    f"inj{inject_ms:4.1f})"
                 )
     finally:
         signal.signal(signal.SIGINT, old)
@@ -350,24 +351,26 @@ def run_inference(args: argparse.Namespace) -> tuple[dict[str, Any], LatencyStat
 
 
 def default_onnx(run: str | None) -> Path:
-    """没指定 --onnx 时猜一个。
+    """Guess one when --onnx is not given.
 
-    **优先 policy.onnx（BC），而不是 qnet.onnx（DQN）。**
-    实测：DQN 微调会把 BC 的策略冲掉 ——
-      BC  与标注一致率 68.8%
-      DQN 与标注一致率  4.8%（20 动作随机猜就是 5%）
-    原来这里优先 qnet，导致真机上模型"一直按 A"乱打。
-    要用 DQN 得显式 --onnx，并先看 train.py 的 [agree] 输出确认它没崩。
+    **Prefer policy.onnx (BC) over qnet.onnx (DQN).**
+    Measured: DQN fine-tuning wipes out the BC policy --
+      BC  agreement with the labels 68.8%
+      DQN agreement with the labels  4.8% (random guessing among 20 actions is 5%)
+    This used to prefer qnet, which made the model "hold A forever" and flail on the real machine.
+    To use DQN you must pass an explicit --onnx, and first check train.py's [agree] output
+    to confirm it has not collapsed.
     """
     run_dir = Path(run) if run else RUNS_DIR
     for name in ("policy.onnx", "qnet.onnx"):
         if (run_dir / name).exists():
             chosen = run_dir / name
-            note = "（BC 模型，推荐）" if name == "policy.onnx" else \
-                   "（只有 DQN 权重；DQN 可能已把策略练崩，先看 [agree]）"
-            print(f"[infer] 未指定 --onnx，使用 {chosen} {note}")
+            note = "(BC model, recommended)" if name == "policy.onnx" else \
+                   "(DQN weights only; DQN may have wrecked the policy, check [agree] first)"
+            print(f"[infer] --onnx not given, using {chosen} {note}")
             return chosen
-    # 跨运行目录找：按修改时间取最新，而不是按目录名字典序（否则会选到旧 run）
+    # Search across run directories: take the newest by mtime, not by directory-name lexicographic
+    # order (otherwise we pick an old run)
     candidates = sorted(
         list(RUNS_DIR.glob("*/policy.onnx")) + list(RUNS_DIR.glob("*/qnet.onnx")),
         key=lambda p: p.stat().st_mtime,
@@ -375,8 +378,8 @@ def default_onnx(run: str | None) -> Path:
     if candidates:
         chosen = candidates[-1]
         print(
-            f"[infer] 未指定 --onnx，自动选用最近导出的 {chosen}"
-            f"（{time.strftime('%Y-%m-%d %H:%M', time.localtime(chosen.stat().st_mtime))}）"
+            f"[infer] --onnx not given, auto-selecting the most recently exported {chosen}"
+            f"({time.strftime('%Y-%m-%d %H:%M', time.localtime(chosen.stat().st_mtime))})"
         )
         return chosen
     return run_dir / "policy.onnx"
@@ -391,10 +394,11 @@ def run_mock_matches(
     base_seed: int = 1000,
     hz: float = float(TARGET_HZ),
 ) -> dict[str, Any]:
-    """离线跑 N 局，统计胜负/伤害——这是判断"会不会打"的唯一硬指标。
+    """Play N matches offline and tally wins/losses/damage -- the only hard measure of "can it fight".
 
-    直接在进程内用模拟游戏跑，不经过键盘；策略走的是真实的 ONNX 图，
-    所以测出来的是"部署时会看到的那个模型"的行为。
+    It runs the simulated game in-process, without going through the keyboard; the policy goes
+    through the real ONNX graph, so what is measured is the behaviour of "the very model you
+    will see in deployment".
     """
     from mock_game import MockGame
     from state import StateBuilder
@@ -405,10 +409,11 @@ def run_mock_matches(
     taken: list[float] = []
     lengths: list[int] = []
     for i in range(matches):
-        # **round_reset=False 是必须的**（同 train.py::evaluate_in_mock）：
-        # 默认 True 时角色一被打死就立刻重置回满血，于是
-        #   1) 下面这个 "hp<=0 就 break" 的判定在重置后读到的是满血，永远判不出胜负
-        #   2) 伤害被算成"跨多局的累计值"，看着像在稳定蹭血，其实是不准的
+        # **round_reset=False is mandatory** (same as train.py::evaluate_in_mock):
+        # with the default True, a character that gets killed is immediately reset to full HP, so
+        #   1) the "break on hp<=0" test below reads full HP after the reset and can never decide a winner
+        #   2) the damage is then counted as a "cumulative value spanning several matches", which looks
+        #      like steadily chipping away but is in fact wrong
         game = MockGame(
             seed=base_seed + i, input_lag=1, noise=0.0, cpu_enabled=True,
             round_reset=False,
@@ -466,46 +471,47 @@ def cmd_report(args: argparse.Namespace) -> int:
     ensure_dirs()
     onnx_path = Path(args.onnx) if args.onnx else default_onnx(args.run)
     if not onnx_path.exists():
-        print(f"[report] 找不到模型 {onnx_path}")
+        print(f"[report] model not found: {onnx_path}")
         return 2
-    print(f"[report] 模型 {onnx_path}")
-    print(f"[report] 在模拟游戏里跑 {args.matches} 局，每局上限 {args.seconds:.0f}s ...")
+    print(f"[report] model {onnx_path}")
+    print(f"[report] running {args.matches} matches in the simulated game, {args.seconds:.0f}s cap each ...")
     result = run_mock_matches(
         onnx_path, args.matches, args.seconds, provider=args.provider,
         greedy=not args.sample, base_seed=args.seed, hz=args.hz,
     )
-    print("\n[report] 对战统计")
-    print(f"  局数        : {result['matches']}")
-    print(f"  胜 / 负 / 平: {result['wins']} / {result['losses']} / {result['draws']}"
-          f"   胜率 {result['win_rate'] * 100:.0f}%")
-    print(f"  平均打出伤害: {result['avg_damage_dealt']}")
-    print(f"  平均承受伤害: {result['avg_damage_taken']}")
-    print(f"  净伤害      : {result['net_damage']:+}")
-    print(f"  平均时长    : {result['avg_frames'] / args.hz:.1f}s")
+    print("\n[report] match statistics")
+    print(f"  matches     : {result['matches']}")
+    print(f"  W / L / D   : {result['wins']} / {result['losses']} / {result['draws']}"
+          f"   win rate {result['win_rate'] * 100:.0f}%")
+    print(f"  avg damage dealt : {result['avg_damage_dealt']}")
+    print(f"  avg damage taken : {result['avg_damage_taken']}")
+    print(f"  net damage       : {result['net_damage']:+}")
+    print(f"  avg duration     : {result['avg_frames'] / args.hz:.1f}s")
     if result["wins"] == 0 and result["draws"] == result["matches"]:
-        print("\n  说明：一局都没打完 —— 模型学到的是'稳固蹭血'而不是'打死对手'。")
-        print("        这在这点数据量下是正常的：靠手工规则/随机采来的 1-2 万帧，")
-        print("        优化器更愿意稳着挨打少、偶尔打中，而不是冒险上去终结。")
-        print("        要提升：收集真正打赢的对局（--policy rule 且对手弱）→ 加大数据量")
-        print("        → 提高获胜奖励/Reward shaping → 再训 DQN。")
+        print("\n  Note: not a single match was finished -- what the model learned is 'chip away safely',"
+              " not 'kill the opponent'. At this amount of data that is normal: with the 10-20k")
+        print("        frames collected from hand-written rules/random play, the optimizer would rather")
+        print("        take few hits and land the occasional one than gamble on going in for the kill.")
+        print("        To improve: collect matches you actually win (--policy rule against a weak opponent)")
+        print("        -> grow the dataset -> raise the win reward / reward shaping -> then train DQN.")
     out = Path(args.out) if args.out else RUNS_DIR / "report.json"
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n[report] 结果已保存: {out}")
+    print(f"\n[report] results saved to: {out}")
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="阶段 6：ONNX 推理闭环 + 延迟监控")
-    parser.add_argument("--run", default=None, help="训练运行目录（自动找 qnet/policy.onnx）")
-    parser.add_argument("--onnx", default=None, help="直接指定 onnx 文件")
-    parser.add_argument("--seconds", type=float, default=30.0, help="运行时长（秒）")
+    parser = argparse.ArgumentParser(description="Stage 6: ONNX inference loop + latency monitoring")
+    parser.add_argument("--run", default=None, help="training run directory (finds qnet/policy.onnx automatically)")
+    parser.add_argument("--onnx", default=None, help="point directly at an onnx file")
+    parser.add_argument("--seconds", type=float, default=30.0, help="run duration (seconds)")
     parser.add_argument("--provider", choices=["cpu", "cuda"], default="cpu")
-    parser.add_argument("--sample", action="store_true", help="按概率采样而不是贪心（更随机）")
-    parser.add_argument("--verbose", action="store_true", help="每秒打印一次")
-    parser.add_argument("--out", default=None, help="报告文件（默认 runs/latency_<时间>.json）")
+    parser.add_argument("--sample", action="store_true", help="sample by probability instead of greedy (more random)")
+    parser.add_argument("--verbose", action="store_true", help="print once per second")
+    parser.add_argument("--out", default=None, help="report file (default runs/latency_<time>.json)")
     parser.add_argument("--report", action="store_true",
-                        help="离线跑 N 局统计胜率（不碰真游戏、不发按键）")
-    parser.add_argument("--matches", type=int, default=5, help="--report 跑几局")
+                        help="play N matches offline and tally the win rate (never touches the real game, sends no keys)")
+    parser.add_argument("--matches", type=int, default=5, help="how many matches --report plays")
     add_backend_args(parser, default_mock=True)
     args = parser.parse_args(list(argv) if argv is not None else None)
     if not args.report:
@@ -520,11 +526,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_report(args)
 
     report, stats, out_path = run_inference(args)
-    print("\n[infer] 延迟报告")
+    print("\n[infer] latency report")
     print(stats.text())
-    print(f"\n[infer] 实际帧率 {report['actual_hz']} Hz（目标 {report['target_hz']}）")
-    print(f"[infer] 累计奖励 {report['total_reward']:+.2f}，打完 {report['episodes_finished']} 局")
-    print(f"[infer] 报告已保存: {out_path}")
+    print(f"\n[infer] actual frame rate {report['actual_hz']} Hz (target {report['target_hz']})")
+    print(f"[infer] cumulative reward {report['total_reward']:+.2f}, {report['episodes_finished']} matches finished")
+    print(f"[infer] report saved to: {out_path}")
     return 0
 
 

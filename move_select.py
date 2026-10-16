@@ -1,16 +1,16 @@
-"""按距离选招式 —— 这才是出招表（moves_full.json）真正的用途。
+"""Pick moves by distance — this is what the move table (moves_full.json) is actually for.
 
-出招表里每个招式都带 `hits` 数组，每条打击有 `hitx`（水平打击距离）。
-把同一个招式所有 hit 的 hitx 取最大值，就是**这招能打多远**。
+Every move in the move table carries a `hits` array, and every hit has a `hitx` (horizontal hit distance).
+Taking the max hitx over all the hits of one move gives you **how far that move can reach**.
 
-之前的问题：我一直在原地连点普攻（hitx 只有 1~5），
-而 `zhao1`(U) 的 hitx 能到 **30** —— 那才是远攻。
-**手里有距离数据却不用，等于白提取。**
+The earlier problem: I just sat there mashing light attack (hitx only 1~5),
+while `zhao1`(U) reaches hitx **30** — that's the ranged option.
+**Holding distance data and not using it is the same as never having extracted it.**
 
-用法::
+Usage::
 
     from move_select import reach_table, pick_by_distance
-    r = reach_table("ichigo")            # {动作名: 距离}
+    r = reach_table("ichigo")            # {action name: distance}
     act = pick_by_distance(r, dist=25, qi=120, in_air=False)
 """
 
@@ -22,137 +22,137 @@ from pathlib import Path
 
 from config import ACTION_QI_COST, AIR_ONLY_ACTIONS, GROUND_ONLY_ACTIONS
 
-# 哪些 hitType 是**弹道类**（会飞出去，射程远大于 hitx）。
+# Which hitTypes are **projectile-class** (they fly out, so their range is far greater than hitx).
 #
-# 依据 `data/HitType.as`：
-#     KAN=1 KAN_HEAVY=6          挥砍（近战，hitx 就是真实射程）
-#     DA=2 DA_HEAVY=3            打击（近战）
-#     MAGIC=4 MAGIC_HEAVY=5      魔法/能量（**剑气属于这一类**）
-#     FIRE=7 ICE=8 ELECTRIC=9 STONE=10   元素弹道
-#     CATCH=11                   抓取
+# Based on `data/HitType.as`:
+#     KAN=1 KAN_HEAVY=6          slashes (melee, hitx is the real reach)
+#     DA=2 DA_HEAVY=3            strikes (melee)
+#     MAGIC=4 MAGIC_HEAVY=5      magic/energy (**qi slashes belong to this class**)
+#     FIRE=7 ICE=8 ELECTRIC=9 STONE=10   elemental projectiles
+#     CATCH=11                   grab
 #
-# 为什么必须区分（用户指出「黑崎一护大多使用剑气」后查源码确认）：
-#   `Bullet.as` 显示弹道是**独立对象**，有自己的 speed / addSpeed / hp /
-#   hitTimes，会从生成点继续往前飞。
-#   所以招式表里的 `hitx` 对弹道类只是**生成位置偏移**，不是射程 ——
-#   按 hitx 建距离表会严重低估这类招式（一护的剑气实际能打很远）。
+# Why the distinction is mandatory (confirmed in the source after the user pointed out "Ichigo mostly uses qi slashes"):
+#   `Bullet.as` shows a projectile is a **separate object** with its own speed / addSpeed / hp /
+#   hitTimes, and it keeps flying forward from its spawn point.
+#   So for projectile-class moves the `hitx` in the move table is only a **spawn-position offset**, not a range —
+#   building the distance table from hitx badly underestimates these moves (Ichigo's qi slashes actually reach very far).
 PROJECTILE_HIT_TYPES: frozenset[int] = frozenset({4, 5, 7, 8, 9, 10})
-# 弹道的额外飞行距离估计（游戏单位）。
-# 拿不到每条弹道的 speed×存活帧，先用保守的经验值：
-# 舞台宽 800，剑气类通常能飞过大半场。
+# Estimated extra flight distance for projectiles (game units).
+# There's no way to get speed×lifetime frames per projectile, so start with a conservative empirical value:
+# the stage is 800 wide, and qi slashes usually cross most of it.
 PROJECTILE_EXTRA_RANGE = 300.0
 
-# ★ 只有"能量类"招式才可能有弹道 —— 这个白名单是必须的 ★
+# ★ Only "energy-class" moves can have projectiles — this whitelist is mandatory ★
 #
-# 踩过的坑：一开始的判据是"只要有 hit 的 hitType 属于弹道集合就 +300"，
-# 结果 **`catch1`（方向键+攻击的突进抓取）也被算成射程 305 的远程招** ——
-# 因为它有一个 `hitType=5` 的 hit（那是**抓取效果**，不是弹道）。
-# 同样 `airAttack`（空中普攻）也被算成 301。
-# 于是 `pick_by_distance` 在几乎任何距离都把它俩当成可选远程招，
-# 实测 `catch1` 占了采集数据的 57~60%（策略退化成单一动作）。
+# A pit I fell into: the first criterion was "add +300 whenever any hit's hitType is in the projectile set",
+# which ended up counting **`catch1` (the dash grab on direction+attack) as a 305-reach ranged move** —
+# because it has a hit with `hitType=5` (that's the **grab effect**, not a projectile).
+# Likewise `airAttack` (the air light attack) was counted as 301.
+# As a result `pick_by_distance` treated both as selectable ranged moves at almost any distance,
+# and measured `catch1` took 57~60% of the collected data (the policy degenerated into a single action).
 #
-# 正确的判据是**看这招的输入类型**：U（skill）/ I（superSkill）系才是能量招，
-# J（attack）系的普攻与抓取都是近身。
+# The correct criterion is **to look at the move's input type**: the U (skill) / I (superSkill) lines are energy moves,
+# while the light attacks and grabs in the J (attack) line are all close-range.
 RANGED_TRIGGERS: frozenset[str] = frozenset({
-    "zhao1", "zhao2", "zhao3",              # U 系
-    "bisha", "bishaUP", "bishaSUPER", "bishaAIR",   # I 系
-    "airBisha", "airSkill",                 # 空中能量招
+    "zhao1", "zhao2", "zhao3",              # U line
+    "bisha", "bishaUP", "bishaSUPER", "bishaAIR",   # I line
+    "airBisha", "airSkill",                 # air energy moves
 })
 
-# **突进类招式**：打击距离短，但出招时**会把人往前带**，
-# 所以它的"有效威胁距离"比 hitx 大得多。
+# **Dash-class moves**: short hit distance, but performing them **carries you forward**,
+# so their "effective threat range" is much larger than hitx.
 #
-# 实证：`catch1`（方向键+攻击）的 hitx 只有 5，但它在采集数据里曾占 57%、
-# 且奖励 +180；把它的加成去掉（当成纯近身）之后奖励掉到 +28 ——
-# **说明它确实是个有效的贴身手段**，只是不该按"弹道"给 +300。
+# Evidence: `catch1` (direction+attack) has hitx of only 5, yet it once took 57% of the
+# collected data with a reward of +180; removing its bonus (treating it as pure close-range) dropped the reward to +28 —
+# **which shows it really is an effective point-blank tool**, it just shouldn't be given +300 as a "projectile".
 DASH_TRIGGERS: frozenset[str] = frozenset({"catch1", "ghostStep"})
-DASH_EXTRA_RANGE = 55.0      # 突进大致能覆盖的距离（经验值）
+DASH_EXTRA_RANGE = 55.0      # roughly the distance a dash can cover (empirical value)
 
-# ★ 普攻(attack/J) 的"近身有效射程" ★
+# ★ The light attack's (attack/J) "close-range effective reach" ★
 #
-# 为什么需要：`diag_j.py` 实测策略在近身几乎不选 `attack`
-#   —— 因为 `reach_table` 里 attack=6（真实 hitx），而 catch1/zhao1 都=305，
-#   `pick_by_distance` 要求 `reach >= dist`，于是 dist>6 时 attack **被直接过滤**。
-#   用户观察到的"一直在 j 但只按一下"就是这么来的：
-#   策略在 15~120 段选的是 catch1（突进，看起来像 J）和 zhao1，
-#   而 catch1 不连段，所以永远只"一下"。
+# Why it's needed: `diag_j.py` measured that the policy almost never picks `attack` at close range
+#   — because in `reach_table` attack=6 (its real hitx) while catch1/zhao1 are both 305,
+#   and `pick_by_distance` requires `reach >= dist`, so for dist>6 attack gets **filtered out outright**.
+#   That's exactly where the user's observation of "it keeps pressing j but only taps once" comes from:
+#   in the 15~120 band the policy picks catch1 (the dash, which looks like J) and zhao1,
+#   and catch1 doesn't combo, so it's always only "one tap".
 #
-# 而按实测数据，近身 attack **严格优于** catch1：
-#     attack(J)  伤害 160  僵直 600（三段递增 300/400/600）
-#     catch1    伤害 100  僵直 350
-#   => 近身该出 J。
+# But on measured data, close-range attack is **strictly better than** catch1:
+#     attack(J)  damage 160  hitstun 600 (the three hits scale up 300/400/600)
+#     catch1     damage 100  hitstun 350
+#   => at close range you should throw J.
 #
-# ★ 不动 catch1 的加成 ★：`move_select.py` 里记着那是故意保留的
-#   （去掉后真机净伤害从 -796 掉到 -1083，因为人机变成"站远处放剑气不贴身"）。
-#   所以只是给 attack 补一个**近身**加成，让它在近身段能和 catch1 平起平坐 ——
-#   数据上它会赢（伤害/僵直都更高）。
-ATTACK_CLOSE_RANGE = 20.0    # 普攻在"贴脸"范围内的有效威胁距离
+# ★ Leave catch1's bonus alone ★: the note in `move_select.py` says it's deliberately kept
+#   (removing it dropped real-machine net damage from -796 to -1083, because the AI turned into "stand far away and spam qi slashes instead of closing in").
+#   So we only give attack a **close-range** bonus so it can stand on equal footing with catch1 in the close band —
+#   on the numbers it wins (both damage and hitstun are higher).
+ATTACK_CLOSE_RANGE = 20.0    # effective threat range of the light attack inside "in your face" distance
 
 MOVES_PATH = Path(__file__).resolve().parent / "config" / "moves_full.json"
 
-# ★ 缺失招的兜底射程表 ★
+# ★ Fallback reach table for missing moves ★
 #
-# 为什么需要：`moves_full.json` 的 form0 只登记了 7 个 trigger，
-# 于是 `reach_table` 只有 6 个招，而 `pick_by_distance` 只在表里挑
-# -> **没进表的招永远选不到**。
-# 实测后果：用户点名的 `↓U`(zhao2) / `↑U`(zhao3) 基本用不上
-# （`st=20` 只占 1.4% 的帧），`↓J`/`↑J` 更是 0。
+# Why it's needed: form0 in `moves_full.json` only registers 7 triggers,
+# so `reach_table` only has 6 moves, and `pick_by_distance` only picks from that table
+# -> **moves that never made it into the table can never be selected**.
+# Measured consequence: the moves the user called out, `↓U`(zhao2) / `↑U`(zhao3), are basically never used
+# (`st=20` accounts for only 1.4% of frames), and `↓J`/`↑J` are at 0.
 #
-# 数值来自 `moves_full.json` 里各招 hit 的 `hitx`（以及 verify_combo.py 的实测）：
+# The values come from the `hitx` of each move's hits in `moves_full.json` (plus measurements from verify_combo.py):
 #   zhao1 hitx 8 / zhao2 hitx 5 / zhao3 hitx 5
 #   skill1 hitx 6 / skill2 hitx 6 / catch2 hitx 5
 #   bishaUP hitx 5 / airSkill hitx 8
 #
-# 只在"角色数据里确实没有这一招"时才补，**不覆盖已有的真实射程**。
+# Only fill in a move when "the character data really doesn't have it", and **never overwrite an existing real reach**.
 FALLBACK_REACH: dict[str, float] = {
-    "zhao2": 12.0,      # ↓U 下抓
-    "zhao3": 12.0,      # ↑U 上抓
-    "skill1": 10.0,     # ↓J 下砍
-    "skill2": 10.0,     # ↑J 上砍
-    "catch2": 10.0,     # ←/→+U 握
-    "bishaUP": 10.0,    # ↑I 上必杀（100 气）
-    "airSkill": 12.0,   # 空中 U
-    "airAttack": 12.0,  # 空中 J（真实 hitx 8）
+    "zhao2": 12.0,      # ↓U low grab
+    "zhao3": 12.0,      # ↑U high grab
+    "skill1": 10.0,     # ↓J low slash
+    "skill2": 10.0,     # ↑J high slash
+    "catch2": 10.0,     # ←/→+U grab
+    "bishaUP": 10.0,    # ↑I upward special (100 qi)
+    "airSkill": 12.0,   # air U
+    "airAttack": 12.0,  # air J (real hitx 8)
 }
 
-# 全招式轮换序列：**保证每类招式都被真正按出去**。
+# Full move rotation sequence: **guarantees every move class actually gets pressed**.
 #
-# 为什么需要它：距离还测不准（视觉定位没搞定），没法用 pick_by_distance，
-# 但"只会连点普攻"这个问题必须先解决。轮换序列把
-# 远攻(U) / 必杀(I) / 超必杀(↓+I) / 防御(S) / 组合技(↓+J,↑+J) / 空中(跳+空中J)
-# 全部覆盖到，采数据时才能拿到这些动作的样本。
+# Why it's needed: distance still isn't measured reliably (visual localisation never worked out), so pick_by_distance is unusable, but the "only mashes light attack" problem has to be solved first.
+# The rotation covers
+# ranged (U) / special (I) / super (↓+I) / defence (S) / combo moves (↓+J,↑+J) / air (jump+air J)
+# so that data collection can actually get samples of these actions.
 #
-# 顺序设计：先防御（稳一下），再远攻探距离，然后近身连段，
-# 气够时插必杀，最后跳一次打空中。
+# Ordering: defend first (settle down), then probe distance with the ranged move, then close-range combos,
+# slip in a special when there's enough qi, and finish with one jump to hit the air.
 MOVE_ROTATION: tuple[str, ...] = (
-    "defend",       # S  防御
-    "zhao1",        # U  远攻（hitx 30，免费）
-    "right",        # D  前进
-    "attack",       # J  普攻
-    "skill1",       # ↓+J 砍技1
-    "attack",       # J  连段
-    "skill2",       # ↑+J 砍技2
-    "bisha",        # I  必杀（100 气，没气会自动失败但不影响）
-    "left",         # A  后撤
-    "zhao1",        # U  再远攻
-    "jump",         # K  跳
-    "airAttack",    # 空中 J
-    "bishaSUPER",   # ↓+I 超必杀（300 气）
-    "catch1",       # ←/→+J 突进握
-    "ghostStep",    # ↓+L 替身术
-    "assist",       # O  召唤援助
+    "defend",       # S  defend
+    "zhao1",        # U  ranged (hitx 30, free)
+    "right",        # D  walk forward
+    "attack",       # J  light attack
+    "skill1",       # ↓+J slash skill 1
+    "attack",       # J  combo
+    "skill2",       # ↑+J slash skill 2
+    "bisha",        # I  special (100 qi; without qi it just fails, which is harmless)
+    "left",         # A  back off
+    "zhao1",        # U  ranged again
+    "jump",         # K  jump
+    "airAttack",    # air J
+    "bishaSUPER",   # ↓+I super (300 qi)
+    "catch1",       # ←/→+J dash grab
+    "ghostStep",    # ↓+L substitution jutsu
+    "assist",       # O  call assist
 )
 
 
 def rotation_cycle(start: int = 0, n: int = 1) -> list[str]:
-    """从轮换序列里取 n 个动作（循环）。"""
+    """Take n actions from the rotation sequence (wrapping around)."""
     out = []
     for i in range(n):
         out.append(MOVE_ROTATION[(start + i) % len(MOVE_ROTATION)])
     return out
 
 
-# 招式名 -> 我们动作空间里的名字（出招表用 AS3 的触发器名）
+# Move name -> the name in our action space (the move table uses AS3 trigger names)
 TRIGGER_TO_ACTION: dict[str, str] = {
     "attack": "attack",
     "attackAIR": "airAttack",
@@ -180,7 +180,7 @@ def _load() -> dict:
 
 
 def reach_table(character: str) -> dict[str, float]:
-    """返回 {动作名: 最大 hitx}。取不到就返回内置的保守默认值。"""
+    """Return {action name: max hitx}. Falls back to the built-in conservative defaults when unavailable."""
     data = _load()
     chars = data.get("characters", {})
     entry = chars.get(character)
@@ -190,11 +190,11 @@ def reach_table(character: str) -> dict[str, float]:
     forms = entry.get("forms") or []
     if not forms:
         return default_reach()
-    # **只取基础形态（form_index=0）**，不要合并所有形态的最大值。
-    # 踩过的坑：一护的**卍解形态**里普攻也能放剑气（hitType=MAGIC），
-    # 合并所有形态后 `attack` 的射程变成 301，整张表被压平
-    # （所有招都 300+，等于没有区分度）。
-    # AI 绝大多数时间打的是基础形态，所以按它建表才对。
+    # **Only take the base form (form_index=0)**, don't merge the maxima across all forms.
+    # A pit I fell into: in Ichigo's **Bankai form** even the light attack fires qi slashes (hitType=MAGIC),
+    # and merging all forms made `attack`'s reach 301, flattening the whole table
+    # (every move 300+, which means no discrimination at all).
+    # The AI spends the vast majority of its time in the base form, so that's what the table must be built from.
     forms = sorted(forms, key=lambda f: abs(int(f.get("form_index", 0))))
     base = [f for f in forms if int(f.get("form_index", 0)) == 0] or forms[:1]
     for form in base:
@@ -210,34 +210,34 @@ def reach_table(character: str) -> dict[str, float]:
                 except (TypeError, ValueError):
                     continue
                 ht = h.get("hitType")
-                # ★ 这里曾经加过"只有能量类招式才给弹道加成"的白名单，
-                #   想修掉 `catch1`（突进抓取，hitx=5）被算成射程 305 的问题。
-                #   **结果是错的，已回退** —— 实测对比：
-                #     catch1 加成 305（白名单前）: 占样本 57.7%，采集奖励 +180，
-                #                                  真机净伤害 **-796**
-                #     catch1 只给突进 60（白名单后）: 占 18.0%，奖励 +108，
-                #                                  真机净伤害 **-1083**
-                #   原因：`catch1` 是**突进**招，把它当成远距离可选招时
-                #   AI 会在远处随机选它 -> **冲上去打**；限制成近身之后
-                #   AI 就站在远处放剑气、**不再贴身**，而站着放剑气赢不了
-                #   伤害交换（地狱人机压制力很强）。
-                #   => 语义上"错"的射程，行为上反而更有用。
-                #      真正要解决的是"AI 需要主动贴身"，不是这张表。
+                # ★ I once added a whitelist here for "only energy-class moves get the projectile bonus",
+                #   trying to fix `catch1` (the dash grab, hitx=5) being counted as 305 reach.
+                #   **It was wrong and has been reverted** — measured comparison:
+                #     catch1 with bonus 305 (before the whitelist): 57.7% of samples, collection reward +180,
+                #                                  real-machine net damage **-796**
+                #     catch1 with only dash 60 (after the whitelist): 18.0% of samples, reward +108,
+                #                                  real-machine net damage **-1083**
+                #   Why: `catch1` is a **dash** move, and when it's treated as a long-range option
+                #   the AI picks it at random from far away -> **it charges in**; once restricted to close range
+                #   the AI just stands far away spamming qi slashes and **stops closing in**, and standing there
+                #   slashing loses the damage trade (hell-difficulty AI pressures very hard).
+                #   => A range that is semantically "wrong" turns out to be behaviourally more useful.
+                #      What actually needs fixing is "the AI must close in on its own", not this table.
                 if isinstance(ht, int) and ht in PROJECTILE_HIT_TYPES:
                     hx += PROJECTILE_EXTRA_RANGE
                 reach = max(reach, hx)
-            # ★ 普攻的"近身有效射程" ★ 见文件上方 ATTACK_CLOSE_RANGE 的说明：
-            #   attack 的真实 hitx 只有 6，但它是**贴脸连段的起手**，
-            #   给它一个近身加成，否则 pick_by_distance 在 dist>6 时会直接
-            #   把它过滤掉（实测：近身几乎永远不出 J）。
+            # ★ The light attack's "close-range effective reach" ★ see the ATTACK_CLOSE_RANGE note at the top of the file:
+            #   attack's real hitx is only 6, but it's the **opener for in-your-face combos**,
+            #   so give it a close-range bonus; otherwise pick_by_distance filters it
+            #   out outright for dist>6 (measured: close range almost never throws J).
             if action == "attack":
                 reach = max(reach, ATTACK_CLOSE_RANGE)
             if reach > out.get(action, 0.0):
                 out[action] = reach
-    # ★ 补齐缺失的招 ★
-    #   详见文件上方 FALLBACK_REACH 的说明：
-    #   `moves_full.json` 只登记了一部分招，缺的那些**不补就永远选不到**。
-    #   只在"确实没有"时补，不覆盖真实值。
+    # ★ Fill in the missing moves ★
+    #   See the FALLBACK_REACH note at the top of the file:
+    #   `moves_full.json` only registers some of the moves, and the missing ones **can never be selected unless filled in**.
+    #   Only fill in when they're "really absent", never overwrite real values.
     for _a, _r in FALLBACK_REACH.items():
         if _a not in out:
             out[_a] = _r
@@ -245,7 +245,7 @@ def reach_table(character: str) -> dict[str, float]:
 
 
 def default_reach() -> dict[str, float]:
-    """拿不到角色数据时的保守距离表（按 aizen 的量级）。"""
+    """Conservative distance table for when character data is unavailable (on the order of aizen's)."""
     return {
         "attack": 5.0, "skill1": 8.0, "skill2": 8.0,
         "zhao1": 30.0, "zhao2": 30.0, "zhao3": 30.0,
@@ -262,17 +262,17 @@ def pick_by_distance(
     in_air: bool = False,
     prefer_damage: bool = True,
 ) -> str:
-    """按"够得着 + 省气 + 够强"挑一招。
+    """Pick a move by "can reach + saves qi + is strong enough".
 
-    规则（**别写成"气最多的优先"** —— 那样贴身也会放 300 气的超必杀，纯浪费）：
-      1. 只在够得着的招里挑（hitx >= dist）
-      2. 空中/地面限制、气量限制
-      3. 先算"不耗气的招最远能打多少"
-         * 距离在**不耗气射程之内** -> 用不耗气的招（省气，
-           同类里挑 hitx 最大的，通常也是伤害最高的）
-         * 距离**超出不耗气射程** -> 才动用气招，且挑**够得着的里最省气的**
-           （能用 100 气的解决就别用 300 气）
-      4. 都够不着 -> 近距离原地防御，远距离前进
+    Rules (**don't write it as "most qi first"** — that would fire a 300-qi super even in your face, pure waste):
+      1. Only pick among moves that can reach (hitx >= dist)
+      2. Air/ground restrictions, qi restrictions
+      3. First work out "how far the qi-free moves can reach"
+         * distance within **qi-free reach** -> use a qi-free move (saves qi;
+           among those pick the largest hitx, which is usually also the highest damage)
+         * distance **beyond qi-free reach** -> only then spend qi, and pick **the cheapest among those that reach**
+           (if 100 qi solves it, don't use 300)
+      4. Nothing reaches -> defend in place at close range, walk forward at long range
     """
     def usable(action: str) -> bool:
         if in_air and action not in AIR_ONLY_ACTIONS:
@@ -290,48 +290,48 @@ def pick_by_distance(
 
     free_max = max(free.values()) if free else 0.0
 
-    # **气够就放必杀**（能量招）。
-    # 不加这条的话，`bisha`（I，100 气）永远不会被选中 ——
-    # 因为 `zhao1`（U，0 气）射程一样远，按"最省气"永远轮不到必杀，
-    # 表现就是"AI 从不放必杀"（用户实测反馈过）。
+    # **Fire the special when there's enough qi** (energy moves).
+    # Without this rule, `bisha` (I, 100 qi) would never be selected —
+    # because `zhao1` (U, 0 qi) reaches just as far, and under "cheapest qi" the special never gets a turn,
+    # which shows up as "the AI never fires a special" (the user reported this from real play).
     #
-    # 门槛从 200 调到 100：实测门槛 200 时，气在 100~200 这一档完全闲置，
-    # 而 `bisha`（100 气 / 300 伤害 = 3.0 伤害每气）是**气效率最高的招**，
-    # 比超必杀（300 气 / 600 伤害 = 2.0）更划算。
-    # 门槛 200 还会让气很难攒到 300 -> 超必杀（`qi >= 240` 那条）几乎不触发
-    # （实测 bishaSUPER 只占 0.1~0.2% 的样本）。
-    # 气有富余就放必杀。曾试过把门槛提到 300（为超必杀留气），
-    # **实测无效、已回退** —— 采集奖励 +167 vs 基线 ~170（无差异）。
-    # 原因：超必杀的气效率更差：
-    #   bisha      300 伤害 / 100 气 = 3.0 伤害每气
-    #   bishaSUPER 600 伤害 / 300 气 = 2.0 伤害每气
-    # 用 3.0 的招换掉 2.0 的招，总伤害反而降（bisha 7.9%->0.6%，
-    # 超必杀只补回 1.7%）。**"留气放大招"在这个游戏里是负收益。**
+    # Threshold lowered from 200 to 100: with a threshold of 200 the 100~200 qi band sat completely idle,
+    # while `bisha` (100 qi / 300 damage = 3.0 damage per qi) is the **most qi-efficient move**,
+    # a better deal than the super (300 qi / 600 damage = 2.0).
+    # A threshold of 200 also makes it hard to ever bank 300 qi -> the super (the `qi >= 240` branch) almost never fires
+    # (measured: bishaSUPER is only 0.1~0.2% of samples).
+    # Fire the special whenever qi is in surplus. I once tried raising the threshold to 300 (to save qi for the super),
+    # **measured as ineffective, reverted** — collection reward +167 vs baseline ~170 (no difference).
+    # The cause: the super's qi efficiency is worse:
+    #   bisha      300 damage / 100 qi = 3.0 damage per qi
+    #   bishaSUPER 600 damage / 300 qi = 2.0 damage per qi
+    # Trading a 3.0 move for a 2.0 move lowers total damage (bisha 7.9%->0.6%,
+    # the super only makes back 1.7%). **"Save qi for the big move" is a negative-return play in this game.**
     surplus = qi >= 200.0
     if paid and surplus:
         return min(paid.items(),
                    key=lambda kv: (ACTION_QI_COST.get(kv[0], 0), -kv[1]))[0]
 
     if free and (free_max >= dist):
-        # 不耗气就能打到。
+        # It can be reached without spending qi.
         #
-        # **不要"永远挑射程最远的那个"** —— 实测这样会让示范退化成单一动作：
-        # ichigo 的 `zhao1`(U) 射程 30，是免费招里最远的，于是"一进入距离就永远出 U"。
-        # 行为克隆忠实照抄，模型在真机上就"一直按 U"（用户实测反馈）。
-        # 而且这数据没法训练出会连招/会换招的策略。
+        # **Don't "always pick the longest-reaching one"** — measured, that degenerates the demonstration into a single action:
+        # ichigo's `zhao1`(U) has reach 30, the longest of the free moves, so "the moment you're in range you always throw U".
+        # Behaviour cloning copies that faithfully, and the model just "holds U" on the real machine (the user reported this from play).
+        # And that data can't train a policy that combos or switches moves.
         #
-        # 改成**加权随机**：
-        #   * 贴脸（dist <= 12）优先短招（普攻/组合技），因为那时短招伤害效率高
-        #   * 中距离偏向长招（够得着且安全），但保留变化
-        #   * 权重按"射程刚好够用"给：越接近 dist 的招权重越高（不浪费前摇）
+        # Changed to **weighted random**:
+        #   * in your face (dist <= 12) prefers short moves (light attack/combo moves), since short moves are damage-efficient there
+        #   * mid range leans towards long moves (they reach and are safe), but variation is kept
+        #   * weights are given by "the reach is just barely enough": the closer a move's reach is to dist, the higher its weight (no wasted startup)
         picks = sorted(free)
-        # 权重 = 1 / (1 + |reach - dist|)，再给短招一点额外权重
+        # weight = 1 / (1 + |reach - dist|), plus a little extra weight for short moves
         weights = []
         for a in picks:
             r = free[a]
             w = 1.0 / (1.0 + abs(r - dist))
             if dist <= 12.0 and r <= 14.0:
-                w *= 3.0            # 贴脸时偏好短招（能接连段）
+                w *= 3.0            # prefer short moves in your face (they can link into combos)
             weights.append(w)
         total = sum(weights)
         if total <= 0:
@@ -344,7 +344,7 @@ def pick_by_distance(
                 return a
         return picks[-1]
     if paid:
-        # 不耗气的够不着：挑最省气的；同耗气挑射程大的
+        # The qi-free moves can't reach: pick the cheapest; at equal qi cost pick the longer reach
         return min(paid.items(),
                    key=lambda kv: (ACTION_QI_COST.get(kv[0], 0), -kv[1]))[0]
     if not free and not paid:
@@ -360,17 +360,17 @@ if __name__ == "__main__":
     names = list((data.get("characters") or {}).keys())
     who = sys.argv[1] if len(sys.argv) > 1 else (names[0] if names else "ichigo")
     r = reach_table(who)
-    print(f"角色 {who} 的各招式攻击距离（hitx 最大值）：")
+    print(f"Character {who} attack distance per move (max hitx):")
     for action, dist in sorted(r.items(), key=lambda kv: -kv[1]):
         qi = ACTION_QI_COST.get(action, 0)
-        print(f"  {action:<12} 距离 {dist:>5.1f}   耗气 {qi:>3}")
+        print(f"  {action:<12} dist {dist:>5.1f}   qi {qi:>3}")
 
-    print("\n按距离挑招（满气、地面）：")
+    print("\nPicking a move by distance (full qi, ground):")
     for d in (3, 8, 12, 20, 28, 40):
-        print(f"  距离 {d:>3} -> {pick_by_distance(r, d, qi=300)}")
-    print("\n按距离挑招（空中、满气）：")
+        print(f"  dist {d:>3} -> {pick_by_distance(r, d, qi=300)}")
+    print("\nPicking a move by distance (air, full qi):")
     for d in (3, 10, 20):
-        print(f"  距离 {d:>3} -> {pick_by_distance(r, d, qi=300, in_air=True)}")
-    print("\n同一个距离，气量不同：")
+        print(f"  dist {d:>3} -> {pick_by_distance(r, d, qi=300, in_air=True)}")
+    print("\nSame distance, different qi:")
     for q in (0, 50, 100, 300):
-        print(f"  距离 15 气 {q:>3} -> {pick_by_distance(r, 15, qi=q)}")
+        print(f"  dist 15 qi {q:>3} -> {pick_by_distance(r, 15, qi=q)}")

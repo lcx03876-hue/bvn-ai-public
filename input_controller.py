@@ -1,15 +1,17 @@
-"""阶段 2：动作注入。
+"""Stage 2: action injection.
 
-用 Windows ``SendInput``（ctypes 调用）发键盘事件——Flash/AIR 打包的游戏
-对 ``PostMessage`` 不响应，必须走 SendInput 或 vjoy。
+Sends keyboard events with Windows ``SendInput`` (via ctypes) — a Flash/AIR
+packaged game does not respond to ``PostMessage``, so it has to go through
+SendInput or vjoy.
 
-用法：
-    python input_controller.py --list                 # 看按键映射
-    python input_controller.py --test                 # 自动发一套测试序列
-    python input_controller.py --test --focus BVN      # 发之前先把窗口切前台
-    python input_controller.py --press j --hold 10     # 单独测一个键
+Usage:
+    python input_controller.py --list                 # show the key map
+    python input_controller.py --test                 # auto-send a test sequence
+    python input_controller.py --test --focus BVN      # bring the window to the foreground first
+    python input_controller.py --press j --hold 10     # test a single key
 
-注意：游戏窗口必须是前台窗口，否则按键会被别的程序吃掉。
+Note: the game window must be the foreground window, otherwise the keystrokes
+get eaten by another program.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from config import (
     load_keymap,
 )
 
-# ---------------------------------------------------------------- SendInput 绑定
+# ---------------------------------------------------------------- SendInput bindings
 
 ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
 
@@ -85,21 +87,22 @@ _user32.SendInput.restype = wintypes.UINT
 _user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
 _user32.MapVirtualKeyW.restype = wintypes.UINT
 
-# 允许注入到自己以外的进程（游戏是前台，所以这里就是默认行为）
+# Allows injecting into processes other than our own (the game is in the
+# foreground, so this is just the default behaviour here)
 _SENDINPUT_SIZE = ctypes.sizeof(INPUT)
 
 
 def _vk_for(name: str) -> int:
-    """逻辑键名或单字符 -> 虚拟键码。"""
+    """Logical key name or single character -> virtual key code."""
     name = name.strip()
     if len(name) == 1:
         ch = name.upper()
         if "A" <= ch <= "Z" or "0" <= ch <= "9":
             return ord(ch)
-        # 其它单字符走 VkKeyScan
+        # Other single characters go through VkKeyScan
         res = _user32.VkKeyScanW(ctypes.c_wchar(name))
         if res == -1:
-            raise ValueError(f"无法解析按键: {name!r}")
+            raise ValueError(f"cannot resolve key: {name!r}")
         return res & 0xFF
     alias = {
         "enter": 0x0D,
@@ -119,7 +122,7 @@ def _vk_for(name: str) -> int:
     key = name.lower()
     if key in alias:
         return alias[key]
-    raise ValueError(f"未知按键名: {name!r}")
+    raise ValueError(f"unknown key name: {name!r}")
 
 
 def _make_input(vk: int, up: bool, scancode: bool) -> INPUT:
@@ -144,10 +147,11 @@ class InputStats:
 
 
 class InputController:
-    """SendInput 封装。
+    """SendInput wrapper.
 
-    ``scancode=True`` 用扫描码下发（部分 DirectInput/老引擎只认扫描码），
-    默认走 VK；两种都提供，实测哪个有效。
+    ``scancode=True`` sends scan codes (some DirectInput/legacy engines only
+    accept scan codes), the default goes through VK; both are provided so we can
+    find out empirically which one works.
     """
 
     def __init__(
@@ -165,12 +169,13 @@ class InputController:
         self.missing_keys: tuple[str, ...] = self._check_keymap()
 
     def _check_keymap(self) -> tuple[str, ...]:
-        """检查按键映射是否覆盖了所有动作用到的逻辑键。
+        """Check whether the key map covers every logical key the actions use.
 
-        为什么要查：旧版 keymap 里 `jump` 绑的是 W（实际是 up）、
-        并且**没有 dash / bisha 两个键**。这种缺失会在发招时静默失败
-        （KeyError 只在下到具体动作时才抛），采出来的数据就是废的。
-        这里提前一次性报出来。
+        Why bother: an older keymap bound `jump` to W (which is really up) and
+        was **missing both dash and bisha**. A gap like that fails silently when
+        a move is sent (KeyError is only raised once that specific action is
+        reached), so the collected data is worthless. Report it all up front
+        here instead.
         """
         needed: set[str] = set()
         for _keys, _hold in ACTION_SPECS.values():
@@ -178,21 +183,21 @@ class InputController:
         missing = tuple(sorted(k for k in needed if k not in self.keymap))
         if missing:
             print(
-                f"[input][warn] 按键映射缺少这些逻辑键: {', '.join(missing)}；"
-                f"用到它们的动作会失败。请更新 config/keymap.json"
-                f"（出厂默认见 config.py 的 DEFAULT_KEYMAP）"
+                f"[input][warn] the key map is missing these logical keys: {', '.join(missing)}; "
+                f"actions that use them will fail. Please update config/keymap.json "
+                f"(the factory default is DEFAULT_KEYMAP in config.py)"
             )
         return missing
 
     def require_keys(self) -> None:
-        """缺键时直接报错（真机采集前调用，避免采到废数据）。"""
+        """Raise immediately when keys are missing (call before real collection so we do not collect garbage data)."""
         if self.missing_keys:
             raise RuntimeError(
-                f"按键映射缺少 {', '.join(self.missing_keys)}，无法执行相关动作。"
-                f"请修正 config/keymap.json。"
+                f"the key map is missing {', '.join(self.missing_keys)}, so the related actions cannot be executed. "
+                f"Please fix config/keymap.json."
             )
 
-    # -------------------------------------------------- 基础按键
+    # -------------------------------------------------- basic keys
 
     def vk(self, key: str) -> int:
         if key not in self._cache:
@@ -209,8 +214,12 @@ class InputController:
             self.stats.failures += 1
             err = ctypes.get_last_error()
             raise OSError(
-                f"SendInput 只发送了 {sent}/{len(events)} 个事件 (GetLastError={err})；"
-                "常见原因：目标窗口不是前台，或当前进程权限低于游戏（游戏以管理员运行时需同样提权）"
+                f"SendInput only sent {sent}/{len(events)} events (GetLastError={err}); "
+                "common causes: the target window is not in the foreground, or this "
+                "process has lower privileges than the game (if the game runs as "
+                "administrator, this script needs the same elevation). "
+                "See the `SendInput 只发送了 0/1 个事件` troubleshooting note in "
+                "focus_window.py."
             )
         self.stats.events_sent += sent
 
@@ -225,25 +234,27 @@ class InputController:
         self._down.discard(vk)
 
     def tap(self, key: str, hold_frames: int = 2, dt: float = FRAME_DT) -> None:
-        """按一下再松开；hold_frames 是按键保持的帧数。"""
+        """Press and release once; hold_frames is how many frames the key stays down."""
         self.key_down(key)
         if hold_frames > 1:
             _sleep_frames(hold_frames - 1, dt)
         self.key_up(key)
 
     def send_vk(self, vk: int, up: bool = False, scancode: bool | None = None) -> None:
-        """直接按虚拟键码发一个事件（用于输入文字、组合键）。"""
+        """Send a single event straight from a virtual key code (for typing text, modifier combos)."""
         sc = self.scancode if scancode is None else scancode
         self._send([_make_input(vk, up=up, scancode=sc)])
 
     def type_text(self, text: str, hold: float = 0.07,
                   gap: float = 0.06) -> None:
-        """敲一串字符（数字/字母）。配合点击输入框使用。
+        """Type a string of characters (digits/letters). Use together with a click on the input box.
 
-        ★ 节奏必须 ≥2 帧 ★
-        实测教训：原来每键只按住 30ms，而游戏是 30 FPS（33ms/帧），
-        边界不齐时**会丢字符** —— 开局校验抓到过 `kon` 被敲成 `ko`。
-        现在默认按住 70ms、间隔 60ms（都 ≥2 帧），用速度换可靠性。
+        ★ The timing must be ≥2 frames ★
+        Measured lesson: originally each key was held for only 30ms, but the game
+        runs at 30 FPS (33ms/frame), so when the boundaries do not line up
+        **characters get dropped** — the match-start check once caught `kon`
+        being typed as `ko`. Now the default is 70ms hold and 60ms gap (both
+        ≥2 frames), trading speed for reliability.
         """
         for ch in text:
             res = _user32.VkKeyScanW(ctypes.c_wchar(ch))
@@ -262,7 +273,7 @@ class InputController:
             time.sleep(gap)
 
     def select_all(self) -> None:
-        """Ctrl+A。"""
+        """Ctrl+A."""
         self.send_vk(0x11, up=False)  # CTRL
         self.send_vk(0x41, up=False)  # A
         self.send_vk(0x41, up=True)
@@ -273,7 +284,7 @@ class InputController:
         self.send_vk(0x0D, up=True)
 
     def release_all(self) -> None:
-        """松开所有还按着的键（异常退出/收工前必须调用）。"""
+        """Release every key still held down (must be called on abnormal exit / before wrapping up)."""
         for vk in list(self._down):
             inp = INPUT()
             inp.type = INPUT_KEYBOARD
@@ -291,24 +302,24 @@ class InputController:
                 pass
             self._down.discard(vk)
 
-    # -------------------------------------------------- 逻辑动作
+    # -------------------------------------------------- logical actions
 
     def logical_down(self, logical: str) -> None:
         key = self.keymap.get(logical)
         if key is None:
-            raise KeyError(f"按键映射里没有 {logical!r}")
+            raise KeyError(f"key map has no entry for {logical!r}")
         self.key_down(key)
 
     def logical_up(self, logical: str) -> None:
         key = self.keymap.get(logical)
         if key is None:
-            raise KeyError(f"按键映射里没有 {logical!r}")
+            raise KeyError(f"key map has no entry for {logical!r}")
         self.key_up(key)
 
     def apply_action(self, action: str, dt: float = FRAME_DT) -> int:
-        """执行一个离散动作，返回它占用的帧数。"""
+        """Execute one discrete action and return how many frames it occupies."""
         if action not in ACTION_SPECS:
-            raise KeyError(f"未知动作: {action!r}（可选: {', '.join(ACTIONS)}）")
+            raise KeyError(f"unknown action: {action!r} (available: {', '.join(ACTIONS)})")
         keys, hold = ACTION_SPECS[action]
         if not keys or hold <= 0:
             return 0
@@ -325,7 +336,7 @@ class InputController:
 
 
 def _sleep_frames(frames: int, dt: float) -> None:
-    """睡 frames 帧（尽量贴近 dt，受系统时钟精度限制）。"""
+    """Sleep for frames frames (as close to dt as possible, limited by system clock precision)."""
     if frames <= 0:
         return
     deadline = time.perf_counter() + frames * dt
@@ -335,10 +346,10 @@ def _sleep_frames(frames: int, dt: float) -> None:
         remaining = deadline - time.perf_counter()
 
 
-# ---------------------------------------------------------------- 前台窗口
+# ---------------------------------------------------------------- foreground window
 
 def find_window(keyword: str) -> int | None:
-    """按标题关键字找顶层窗口，返回 HWND。"""
+    """Find a top-level window by a title keyword, return the HWND."""
     found: list[int] = []
     EnumWindowsProc = ctypes.WINFUNCTYPE(
         wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
@@ -358,7 +369,7 @@ def find_window(keyword: str) -> int | None:
 
 
 def focus_window(keyword: str) -> bool:
-    """把窗口切到前台。失败说明游戏没开或标题不匹配。"""
+    """Bring the window to the foreground. Failure means the game is not running or the title does not match."""
     hwnd = find_window(keyword)
     if hwnd is None:
         return False
@@ -369,7 +380,7 @@ def focus_window(keyword: str) -> bool:
 
 
 def click_client(hwnd: int, cx: int, cy: int) -> bool:
-    """在窗口客户区坐标 (cx, cy) 处点击一次。"""
+    """Click once at client-area coordinates (cx, cy)."""
     pt = wintypes.POINT(cx, cy)
     if not _user32.ClientToScreen(wintypes.HWND(hwnd), ctypes.byref(pt)):
         return False
@@ -392,10 +403,11 @@ _imm32 = ctypes.WinDLL("imm32", use_last_error=True)
 
 
 def switch_to_english_layout(hwnd: int) -> bool:
-    """把窗口线程切到英文(US)键盘布局。
+    """Switch the window's thread to the English (US) keyboard layout.
 
-    中文输入法布局（langid=0x0804）下，按键可能被 IME 截获进候选词窗口，
-    游戏收不到 KEY_DOWN。切到 0x0409（英文美式）最干净。
+    Under a Chinese input-method layout (langid=0x0804) keystrokes can be
+    intercepted by the IME into its candidate window, and the game never
+    receives KEY_DOWN. Switching to 0x0409 (English US) is the cleanest fix.
     """
     hkl = _user32.LoadKeyboardLayoutW("00000409", 1)  # KLF_ACTIVATE
     if not hkl:
@@ -410,10 +422,10 @@ def switch_to_english_layout(hwnd: int) -> bool:
 
 
 def turn_off_ime(hwnd: int) -> bool:
-    """把窗口输入上下文切到英文/半角模式（ImmSetConversionStatus）。"""
+    """Switch the window's input context to English/half-width mode (ImmSetConversionStatus)."""
     h = _imm32.ImmGetContext(wintypes.HWND(hwnd))
     if not h:
-        return False  # 窗口没挂 IME，说明本来就不会被 IME 截获
+        return False  # the window has no IME attached, so it was never going to be intercepted anyway
     try:
         conv = wintypes.DWORD()
         sent = wintypes.DWORD()
@@ -429,7 +441,7 @@ def turn_off_ime(hwnd: int) -> bool:
 
 
 def keyboard_layout_langid(hwnd: int) -> int:
-    """取窗口所在线程的键盘布局 langid（0x0804=简中，0x0409=英文美式）。"""
+    """Get the keyboard layout langid of the window's thread (0x0804=Simplified Chinese, 0x0409=English US)."""
     tid = _user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), None)
     hkl = _user32.GetKeyboardLayout(tid)
     return int(hkl) & 0xFFFF
@@ -438,23 +450,30 @@ def keyboard_layout_langid(hwnd: int) -> int:
 def activate_window(
     keyword: str, click_xy: tuple[int, int] | None = None, english_ime: bool = True
 ) -> bool:
-    """把游戏窗口激活到"能收键盘"的状态。
+    """Bring the game window into a state where it can receive the keyboard.
 
-    **这一步是必需的，不是可选的。** 实测结论（`test_stage_focus.py`）：
+    **This step is required, not optional.** Measured conclusions (`test_stage_focus.py`):
 
-      * 只调用 ``SetForegroundWindow``，按键完全无效（画面变化只有 1.4% 动画噪声）
-      * 切前台后**再在客户区点一下**，同样的按键立刻生效（角色区变化 95.6%）
+      * Calling ``SetForegroundWindow`` alone leaves keystrokes completely dead
+        (the only picture change is 1.4% animation noise)
+      * After switching to the foreground and **then clicking once in the client
+        area**, the same keystrokes take effect immediately (95.6% change in the
+        character region)
 
-    原因是 Adobe AIR：源码 `GameKeyInput.initlize(stage)` 监听的是 SWF **舞台**
-    的 KeyboardEvent，并有显式的 `KeyBoarder.focus()`（实现是
-    ``_stage.focus = _stage``）。舞台需要真正的键盘焦点，而窗口焦点（前台）
-    并不等于舞台焦点 —— 必须点一下内容区。
+    The reason is Adobe AIR: the source `GameKeyInput.initlize(stage)` listens for
+    KeyboardEvent on the SWF **stage**, and has an explicit `KeyBoarder.focus()`
+    (implemented as ``_stage.focus = _stage``). The stage needs real keyboard
+    focus, and window focus (foreground) is not the same thing as stage focus —
+    you must click the content area.
 
-    另外顺手把输入法切到英文布局 / 关掉中文模式（``english_ime=True``）：
-    中文 IME 会把按键截获进候选词窗口，游戏同样收不到键。
+    While we are at it, also switch the input method to the English layout /
+    turn off Chinese mode (``english_ime=True``): a Chinese IME intercepts the
+    keystrokes into its candidate window, and the game again receives nothing.
 
-    点击位置默认取客户区中心偏下：既在舞台内容里，又避开右侧调试面板
-    （面板里有『开始测试』『秒杀 P2』等按钮，误点会改变游戏状态）。
+    The click position defaults to the client area centre, slightly low: it is
+    inside the stage content while avoiding the debug panel on the right (that
+    panel has buttons such as the start-test and instant-kill-P2 buttons, and a
+    stray click there changes the game state).
     """
     hwnd = find_window(keyword)
     if hwnd is None:
@@ -466,8 +485,8 @@ def activate_window(
         if langid != 0x0409:
             switch_to_english_layout(hwnd)
             langid = keyboard_layout_langid(hwnd)
-        print(f"[input] 键盘布局 langid=0x{langid:04X} "
-              f"({'英文美式 ✅' if langid == 0x0409 else '仍是中文，按键可能被 IME 吃掉 ⚠️'})")
+        print(f"[input] keyboard layout langid=0x{langid:04X} "
+              f"({'English US ✅' if langid == 0x0409 else 'still Chinese, keystrokes may be eaten by the IME ⚠️'})")
 
     _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
     _user32.SetForegroundWindow(hwnd)
@@ -477,10 +496,13 @@ def activate_window(
     _user32.GetClientRect(wintypes.HWND(hwnd), ctypes.byref(rect))
     w, h = rect.right, rect.bottom
     if click_xy is None:
-        # 必须点在**舞台内容区**里（不能落在右侧调试面板，那里有『开始测试』
-        # 『秒杀 P2』等按钮）。
-        # 实测：客户区 1000x600 时点 (380,480) 有效；窗口缩放后点 (w*0.40, h*0.80)
-        # 也有效 —— 这个位置在舞台左半部分的偏下地带，离面板和角色都安全。
+        # The click must land inside the **stage content area** (it cannot hit the
+        # debug panel on the right, which has the start-test and instant-kill-P2
+        # buttons).
+        # Measured: with a 1000x600 client area, clicking (380,480) works; after
+        # the window is resized, clicking (w*0.40, h*0.80) also works — that
+        # location sits in the lower part of the left half of the stage, safely
+        # away from both the panel and the characters.
         cx = int(w * 0.40)
         cy = int(h * 0.80)
     else:
@@ -488,7 +510,7 @@ def activate_window(
     cx = max(1, min(cx, max(1, w - 2)))
     cy = max(1, min(cy, max(1, h - 2)))
     ok = click_client(hwnd, cx, cy)
-    time.sleep(0.35)  # 给 SWF 舞台拿到焦点的时间
+    time.sleep(0.35)  # give the SWF stage time to take focus
     return ok
 
 
@@ -500,79 +522,80 @@ def foreground_title() -> str:
     return buf.value
 
 
-# ---------------------------------------------------------------- 自测序列
+# ---------------------------------------------------------------- self-test sequence
 
-# 覆盖面：移动 / 跳 / 普攻 / 组合技 / 必杀。用来肉眼确认"每个动作都真的出招"。
+# Coverage: movement / jump / normal attack / special-cancel combos / super. Used to
+# eyeball-confirm that "every action really comes out".
 TEST_SEQUENCE: tuple[str, ...] = (
-    "right", "left",          # 前后移动
-    "jump",                   # K 跳
-    "attack",                 # J 普攻
-    "skill1",                 # ↓+J 砍技1
-    "skill2",                 # ↑+J 砍技2
-    "zhao1",                  # U 抓
-    "bisha",                  # I 必杀
-    "bishaSUPER",             # ↓+I 超必杀
-    "ghostStep",              # ↓+L 替身术
-    "assist",                 # O 召唤援助
+    "right", "left",          # walk forward and back
+    "jump",                   # K jump
+    "attack",                 # J normal attack
+    "skill1",                 # ↓+J slash skill 1
+    "skill2",                 # ↑+J slash skill 2
+    "zhao1",                  # U grab
+    "bisha",                  # I special
+    "bishaSUPER",             # ↓+I super
+    "ghostStep",              # ↓+L substitution jutsu
+    "assist",                 # O summon assist
 )
 
 
 def run_selftest(controller: InputController, focus: str | None, dt: float) -> None:
     if focus and not controller.dry_run:
         ok = focus_window(focus)
-        print(f"[focus] 切换前台窗口 {focus!r}: {'成功' if ok else '失败（窗口没找到）'}")
+        print(f"[focus] switching foreground window {focus!r}: {'success' if ok else 'failed (window not found)'}")
         if not ok:
-            print("        按键会发到当前前台窗口，请手动切到游戏再重试。")
+            print("        keystrokes go to whatever is currently in the foreground; switch to the game manually and retry.")
 
-    print(f"[test] 当前前台窗口: {foreground_title()!r}")
-    print(f"[test] 按键映射: {controller.keymap}")
-    print(f"[test] 即将发送 {len(TEST_SEQUENCE)} 个动作，序列: {' -> '.join(TEST_SEQUENCE)}")
-    print("[test] 请在游戏里观察角色是否响应（3 秒后开始）")
+    print(f"[test] current foreground window: {foreground_title()!r}")
+    print(f"[test] key map: {controller.keymap}")
+    print(f"[test] about to send {len(TEST_SEQUENCE)} actions, sequence: {' -> '.join(TEST_SEQUENCE)}")
+    print("[test] watch in the game whether the character responds (starting in 3 seconds)")
     time.sleep(3.0)
     for action in TEST_SEQUENCE:
         frames = controller.apply_action(action, dt=dt)
         print(f"  {action:<8} hold={frames}  frame")
     controller.release_all()
     print(
-        f"[test] 完成: SendInput 调用 {controller.stats.send_calls} 次, "
-        f"事件 {controller.stats.events_sent} 个, 失败 {controller.stats.failures} 次"
+        f"[test] done: {controller.stats.send_calls} SendInput calls, "
+        f"{controller.stats.events_sent} events, {controller.stats.failures} failures"
     )
-    print("[test] 如果角色完全没动：① 窗口是否前台 ② 按键是否对得上（改 config/keymap.json）")
-    print("       ③ 试 --scancode ④ 游戏若以管理员运行，本脚本也要管理员运行")
+    print("[test] if the character does not move at all: ① is the window in the foreground ② do the keys line up (edit config/keymap.json)")
+    print("       ③ try --scancode ④ if the game runs as administrator, this script must run as administrator too")
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="SendInput 动作注入 / 按键自测")
-    parser.add_argument("--list", action="store_true", help="打印按键映射与动作表")
-    parser.add_argument("--test", action="store_true", help="发送自测序列")
-    parser.add_argument("--focus", metavar="KEYWORD", help="发送前把标题含该关键字的窗口切前台")
-    parser.add_argument("--press", metavar="KEY", help="单独按一个键")
-    parser.add_argument("--hold", type=int, default=2, help="--press 按住多少帧")
-    parser.add_argument("--scancode", action="store_true", help="用扫描码下发按键")
-    parser.add_argument("--dry-run", action="store_true", help="只打印不真的发送")
-    parser.add_argument("--hz", type=float, default=60.0, help="帧率（默认 60）")
+    parser = argparse.ArgumentParser(description="SendInput action injection / key self-test")
+    parser.add_argument("--list", action="store_true", help="print the key map and the action table")
+    parser.add_argument("--test", action="store_true", help="send the self-test sequence")
+    parser.add_argument("--focus", metavar="KEYWORD", help="bring the window whose title contains this keyword to the foreground before sending")
+    parser.add_argument("--press", metavar="KEY", help="press a single key")
+    parser.add_argument("--hold", type=int, default=2, help="how many frames --press holds the key")
+    parser.add_argument("--scancode", action="store_true", help="send keys as scan codes")
+    parser.add_argument("--dry-run", action="store_true", help="only print, do not actually send")
+    parser.add_argument("--hz", type=float, default=60.0, help="frame rate (default 60)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     dt = 1.0 / args.hz
     controller = InputController(scancode=args.scancode, dry_run=args.dry_run)
 
     if args.list or not (args.test or args.press):
-        print("逻辑键 -> 物理键:")
+        print("logical key -> physical key:")
         for k, v in controller.keymap.items():
             print(f"  {k:<8} -> {v}")
-        print("\n动作 -> (按键, 保持帧数):")
+        print("\naction -> (keys, hold frames):")
         for a in ACTIONS:
             keys, hold = ACTION_SPECS[a]
-            print(f"  {a:<8} -> {keys or '空'} hold={hold}")
+            print(f"  {a:<8} -> {keys or 'none'} hold={hold}")
         if not (args.test or args.press):
-            print("\n用 --test 发自测序列，用 --press j --hold 5 单测一个键。")
+            print("\nuse --test to send the self-test sequence, or --press j --hold 5 to test a single key.")
         return 0
 
     try:
         if args.press:
             print(f"[press] {args.press!r} (vk={controller.vk(args.press)}) hold={args.hold}")
             controller.tap(args.press, hold_frames=args.hold, dt=dt)
-            print("[press] 已发送")
+            print("[press] sent")
             return 0
         run_selftest(controller, args.focus, dt)
         return 0

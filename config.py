@@ -1,7 +1,7 @@
-"""全局配置：路径、目标进程、按键映射、动作定义、扫描器默认值。
+"""Global configuration: paths, target process, key mapping, action definitions, scanner defaults.
 
-所有可能随游戏版本变化的东西都集中在这里（或 data/*.json），
-其他模块只 import 常量，不硬编码。
+Everything that may change with the game version is centralised here (or in data/*.json);
+other modules only import constants and never hardcode.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------- 路径
+# ---------------------------------------------------------------- paths
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -23,13 +23,15 @@ DEFAULT_KEYMAP_PATH = CONFIG_DIR / "keymap.json"
 DEFAULT_SCAN_PLAN_PATH = CONFIG_DIR / "scan_plan.json"
 DEFAULT_MEMORY_PLAN_PATH = CONFIG_DIR / "memory_plan.json"
 
-# ---------------------------------------------------------------- 目标进程（阶段 1）
+# ---------------------------------------------------------------- target process (stage 1)
 
-# OpenBVN 3.4 Debug 是 Adobe AIR 打包，进程通常是 <游戏名>.exe，
-# 不同发行包名字不一样，所以用候选列表 + 窗口标题兜底匹配。
+# OpenBVN 3.4 Debug is an Adobe AIR package, so the process is usually <game name>.exe,
+# and different distributions use different names, hence a candidate list + window title
+# fallback matching.
 #
-# 首项是实测值：本机装的包（5DPLAY - OBVN，窗口标题 "死神vs火影 绊 - 开放"）
-# 进程名就是 FighterTester.exe，模块同/名，32 位。
+# The first entry is a measured value: the build installed locally (5DPLAY - OBVN, window
+# title "死神vs火影 绊 - 开放") has the process name FighterTester.exe, the module has the
+# same name, and it is 32-bit.
 BVN_PROCESS_CANDIDATES: tuple[str, ...] = (
     "FighterTester.exe",
     "OpenBVN.exe",
@@ -41,7 +43,7 @@ BVN_PROCESS_CANDIDATES: tuple[str, ...] = (
     "bleachvsnaruto.exe",
 )
 
-# 窗口标题关键字（MainWindowTitle 里出现任意一个即认为命中）
+# Window title keywords (any one of them appearing in MainWindowTitle counts as a hit)
 BVN_WINDOW_KEYWORDS: tuple[str, ...] = (
     "死神vs火影",
     "火影",
@@ -53,9 +55,9 @@ BVN_WINDOW_KEYWORDS: tuple[str, ...] = (
     "BVN",
 )
 
-# 模糊匹配时**必须排除**的进程名。
-# 教训：浏览器窗口标题里出现 "OpenBleachVsNaruto"（GitHub 页面标题）时，
-# 会把这个关键字匹配到 msedge.exe 上，结果连错了进程。
+# Process names that **must be excluded** during fuzzy matching.
+# Lesson: when a browser window title contains "OpenBleachVsNaruto" (a GitHub page title),
+# this keyword matches msedge.exe and we end up attached to the wrong process.
 BVN_EXCLUDE_PROCESSES: tuple[str, ...] = (
     "msedge.exe", "chrome.exe", "firefox.exe", "iexplore.exe", "opera.exe",
     "brave.exe", "vivaldi.exe", "explorer.exe", "Code.exe", "devenv.exe",
@@ -63,39 +65,40 @@ BVN_EXCLUDE_PROCESSES: tuple[str, ...] = (
     "WindowsTerminal.exe", "conhost.exe", "SearchApp.exe", "ShellExperienceHost.exe",
 )
 
-# 进程名里出现这些子串一定是浏览器/工具，不可能是游戏
+# If any of these substrings appear in the process name it is definitely a browser/tool,
+# and can never be the game
 BVN_EXCLUDE_SUBSTRINGS: tuple[str, ...] = (
     "edge", "chrome", "firefox", "browser", "explorer", "python", "code",
 )
 
-# ---------------------------------------------------------------- 时序（阶段 3/5）
+# ---------------------------------------------------------------- timing (stages 3/5)
 
 TARGET_HZ = 60
 FRAME_DT = 1.0 / TARGET_HZ
-LATENCY_BUDGET_MS = 16.0  # 单帧预算，超过就算掉帧
+LATENCY_BUDGET_MS = 16.0  # per-frame budget; exceeding it counts as a dropped frame
 
-# ---------------------------------------------------------------- 奖励（阶段 4）
+# ---------------------------------------------------------------- reward (stage 4)
 
-REWARD_HIT = 1.0  # 打中对手一次
-REWARD_HURT = -1.0  # 被对手打中一次
-REWARD_WIN = 10.0  # 获胜
-REWARD_LOSE = -10.0  # 失败（题目只写了获胜 +10，这里补齐对称项）
-REWARD_PER_FRAME = -0.001  # 每帧时间惩罚
+REWARD_HIT = 1.0  # landing one hit on the opponent
+REWARD_HURT = -1.0  # taking one hit from the opponent
+REWARD_WIN = 10.0  # winning
+REWARD_LOSE = -10.0  # losing (the assignment only specified +10 for winning; the symmetric term is filled in here)
+REWARD_PER_FRAME = -0.001  # per-frame time penalty
 
-# ---------------------------------------------------------------- 动作空间
+# ---------------------------------------------------------------- action space
 
-# 离散动作，训练输出维度就是这个长度。
-# **顺序一旦改动，旧数据/旧模型即作废**。
+# Discrete actions; the training output dimension is exactly this length.
+# **Once the order changes, old data / old models are invalidated**.
 #
-# 键位与招式**全部来自反编译源码**，不是猜的：
-#   * 默认键位   : vo/ConfigVO.as:55-59  setDefaultConfig()
-#   * 招式触发条件: fighter/ctrler/FighterKeyCtrler.as
-#   * 边沿触发语义: input/GameInputer.as  isJustDown()（刚按下才算，按住不算）
+# The key bindings and moves come **entirely from the decompiled source**, they are not guesses:
+#   * default keys   : vo/ConfigVO.as:55-59  setDefaultConfig()
+#   * move trigger conditions: fighter/ctrler/FighterKeyCtrler.as
+#   * edge-trigger semantics: input/GameInputer.as  isJustDown() (only a fresh press counts, holding does not)
 #
-# 出厂键位（P1）： W=up  S=down  A=left  D=right
-#                  J=attack  K=jump  L=dash  U=skill  I=superSkill(必杀)  O=beckons(援助)
+# Factory key bindings (P1): W=up  S=down  A=left  D=right
+#                           J=attack  K=jump  L=dash  U=skill  I=superSkill (special)  O=beckons (assist)
 #
-# 源码里的招式条件（FighterKeyCtrler）：
+# Move conditions from the source (FighterKeyCtrler):
 #   attack()      = attack && !(up||down||jump)        -> J
 #   skill1()      = down && attack                     -> ↓+J
 #   skill2()      = up   && attack                     -> ↑+J
@@ -104,49 +107,51 @@ REWARD_PER_FRAME = -0.001  # 每帧时间惩罚
 #   bisha()       = superSkill && !(up||down)          -> I
 #   bishaSUPER()  = superSkill && down                 -> ↓+I
 #   assist()      = special / beckons                  -> O
-#   ghostStep()   = dash && down                       -> ↓+L   （替身术）
-#   attackAIR()   = attack（空中）                      -> 空中 J
+#   ghostStep()   = dash && down                       -> ↓+L   (substitution jutsu)
+#   attackAIR()   = attack (airborne)                  -> air J
 #
-# 旧版 9 动作的两个错误（已修）：
-#   1. `heavy` 绑 K、`defend` 绑 L —— 源码里 **K 是跳跃、L 是冲刺**，
-#      所以旧数据里 heavy/defend 两类样本是纯噪声（等于随机跳/冲刺）
-#   2. 没有必杀（I）、超必杀（↓+I）、空中攻击 —— 模型"打不死人"的直接原因
+# The two mistakes of the old 9-action version (already fixed):
+#   1. `heavy` bound to K and `defend` bound to L -- in the source **K is jump and L is dash**,
+#      so the heavy/defend samples in the old data are pure noise (equivalent to random jump/dash)
+#   2. no special (I), no super (↓+I), no air attack -- the direct reason the model "could not kill"
 ACTIONS: tuple[str, ...] = (
-    "noop",        # 0  什么都不按
-    "left",        # 1  A  后退
-    "right",       # 2  D  前进
-    "jump",        # 3  K  跳跃
-    "defend",      # 4  S  防御（源码 defense() = 按住 down 键）
-    "attack",      # 5  J  普攻（连段 k1→k2→k3→k4）
-    "skill1",      # 6  ↓+J 砍技1
-    "skill2",      # 7  ↑+J 砍技2
-    "zhao1",       # 8  U  抓（**hitx 最大到 30 = 远攻主力**）
-    "zhao2",       # 9  ↓+U 下抓
-    "zhao3",       # 10 ↑+U 上抓
-    "catch1",      # 11 ←/→+J 握（带位移的突进打击）
-    "bisha",       # 12 I  必杀（100 气）
-    "bishaUP",     # 13 ↑+I 上必杀（100 气）
-    "bishaSUPER",  # 14 ↓+I 超必杀（300 气）
-    "airAttack",   # 15 空中 J  跳砍
-    "airBisha",    # 16 空中 I  空中必杀（100 气）
-    "airSkill",    # 17 空中 U  跳招
-    "ghostStep",   # 18 ↓+L 替身术
-    "assist",      # 19 O  召唤援助
+    "noop",        # 0  press nothing
+    "left",        # 1  A  retreat
+    "right",       # 2  D  advance
+    "jump",        # 3  K  jump
+    "defend",      # 4  S  guard (source defense() = hold down key)
+    "attack",      # 5  J  normal attack (combo k1→k2→k3→k4)
+    "skill1",      # 6  ↓+J skill 1 (chop)
+    "skill2",      # 7  ↑+J skill 2 (chop)
+    "zhao1",       # 8  U  grab (**hitx reaches 30 = main long-range attack**)
+    "zhao2",       # 9  ↓+U low grab
+    "zhao3",       # 10 ↑+U high grab
+    "catch1",      # 11 ←/→+J grip (a dashing strike with movement)
+    "bisha",       # 12 I  special (100 qi)
+    "bishaUP",     # 13 ↑+I air special (100 qi)
+    "bishaSUPER",  # 14 ↓+I super (300 qi)
+    "airAttack",   # 15 air J  jump attack
+    "airBisha",    # 16 air I  air special (100 qi)
+    "airSkill",    # 17 air U  jump move
+    "ghostStep",   # 18 ↓+L substitution jutsu
+    "assist",      # 19 O  summon assist
 )
 ACTION_INDEX = {name: i for i, name in enumerate(ACTIONS)}
 NUM_ACTIONS = len(ACTIONS)
 
-# 每个动作的按键组合。
-#   keys  逻辑键名（见 keymap.json），按顺序按下；多个即"修饰键 + 动作键"
-#   hold  全部键按住多少帧再一起松开
-# 组合键的语义：修饰键先按住，动作键最后按下 —— 这样动作键才是"刚按下"（边沿触发）
+# Key combination for each action.
+#   keys  logical key names (see keymap.json), pressed in order; more than one means
+#         "modifier key + action key"
+#   hold  how many frames to hold all keys down before releasing them together
+# Semantics of the combination: the modifier is held first and the action key is pressed
+# last -- that way the action key is the one that is "just pressed" (edge trigger)
 ActionSpec = tuple[tuple[str, ...], int]
 ACTION_SPECS: dict[str, ActionSpec] = {
     "noop": ((), 0),
     "left": (("left",), 6),
     "right": (("right",), 6),
     "jump": (("jump",), 3),
-    # 防御：源码 FighterKeyCtrler.defense() = GameInputer.down()，即按住 S
+    # guard: source FighterKeyCtrler.defense() = GameInputer.down(), i.e. hold S
     "defend": (("down",), 12),
     "attack": (("attack",), 2),
     "skill1": (("down", "attack"), 3),
@@ -154,7 +159,7 @@ ACTION_SPECS: dict[str, ActionSpec] = {
     "zhao1": (("skill",), 3),
     "zhao2": (("down", "skill"), 3),
     "zhao3": (("up", "skill"), 3),
-    # 握：源码 catch1() = attack && (left || right)。用"前方向 + attack"实现
+    # grip: source catch1() = attack && (left || right). Implemented as "forward + attack"
     "catch1": (("right", "attack"), 3),
     "bisha": (("bisha",), 3),
     "bishaUP": (("up", "bisha"), 3),
@@ -164,93 +169,94 @@ ACTION_SPECS: dict[str, ActionSpec] = {
     "airSkill": (("skill",), 3),
     "ghostStep": (("down", "dash"), 3),
     "assist": (("switch",), 3),
-    # ★ 方向键 + L(dash)：**快速接近**（实测 192 单位/300ms，走路的 3.2 倍）★
-    #   用户指正「你从没用过 L」。
-    #   源码 `ConfigVO.setDefaultConfig`：
-    #     setKeys(W,S,A,D,J,K,L,U,I,O) 对应
+    # ★ direction key + L(dash): **fast approach** (measured 192 units/300ms, 3.2x walking) ★
+    #   The user corrected me: "you have never used L".
+    #   Source `ConfigVO.setDefaultConfig`:
+    #     setKeys(W,S,A,D,J,K,L,U,I,O) corresponds to
     #     up,down,left,right,attack,jump,dash,skill,superKill,beckons
-    #   -> **dash 就是 L**，`FighterMcCtrler.doDash()` 会出冲刺动作。
-    #   实测（test_dash.py，300ms 位移）：
-    #     按住 right  +60      单独按 L  -180（后撤）  right+L  **+192**（前冲）
+    #   -> **dash is L**, `FighterMcCtrler.doDash()` performs the dash move.
+    #   Measured (test_dash.py, 300ms of movement):
+    #     holding right  +60      L alone  -180 (backstep)  right+L  **+192** (forward dash)
     #
-    # ★ 注意：这两个**故意不进 `ACTIONS` 元组** ★
-    #   因为模型/检查点的输出维度绑定 `NUM_ACTIONS`（=len(ACTIONS)），
-    #   加了会让 runs/ 下 ~40 个旧检查点全部失效。
-    #   它们只作为"可按名执行的按键组合"存在，
-    #   由策略的 `dash_intent` 属性驱动（见 RulePolicy / match_run）。
+    # ★ Note: these two are **deliberately not added to the `ACTIONS` tuple** ★
+    #   because the model/checkpoint output dimension is bound to `NUM_ACTIONS` (=len(ACTIONS)),
+    #   and adding them would invalidate all ~40 old checkpoints under runs/.
+    #   They exist only as "key combinations executable by name",
+    #   driven by the policy's `dash_intent` attribute (see RulePolicy / match_run).
     "dashRight": (("right", "dash"), 3),
     "dashLeft": (("left", "dash"), 3),
-    # ★★ 万解 / 变身（用户指正：一护满气 J+K）★★
-    #   源码 `FighterMcCtrler.doWanKaiAction()`：
-    #      useQi(300) 才能放（**满气**）；成功后 actionState = 50；变身期间无敌
-    #   按键（`FighterKeyCtrler`）：
+    # ★★ Bankai / transformation (user correction: Ichigo at full qi, J+K) ★★
+    #   Source `FighterMcCtrler.doWanKaiAction()`:
+    #      useQi(300) is required to use it (**full qi**); on success actionState = 50; invincible during the transformation
+    #   Keys (`FighterKeyCtrler`):
     #      wanKai()  = attack && jump && !up && !down   -> J + K
     #      wanKaiW() = attack && jump && up             -> ↑ + J + K
     #      wanKaiS() = attack && jump && down           -> ↓ + J + K
-    #   注意 `GameKeyInput.wankai()` = isDown(attack) && isDown(jump)
-    #   —— **两键要同时按住**，所以 hold 给长一点（4 帧）。
+    #   Note `GameKeyInput.wankai()` = isDown(attack) && isDown(jump)
+    #   -- **both keys must be held at the same time**, so hold is given a bit longer (4 frames).
     #
-    #   同样**故意不进 ACTIONS**（NUM_ACTIONS 保持 20），
-    #   由策略的 `key_intent` 驱动。
-    # ★ hold 给 8 帧（约 266ms）★
-    #   实测（test_wankai_key.py）：**必须真正"同时按住"J+K**，
-    #   而且按住要够久 —— 200ms 的成功，短了就不触发。
-    # ★ 受身（倒地时快速起身）★
-    #   源码 `FighterMcCtrler.renderHurtFlying()`：
+    #   Also **deliberately not in ACTIONS** (NUM_ACTIONS stays 20),
+    #   driven by the policy's `key_intent`.
+    # ★ hold is set to 8 frames (about 266ms) ★
+    #   Measured (test_wankai_key.py): **J+K really must be "held at the same time"**,
+    #   and the hold has to be long enough -- 200ms succeeds, shorter does not trigger.
+    # ★ Tech recovery (fast get-up while downed) ★
+    #   Source `FighterMcCtrler.renderHurtFlying()`:
     #     if(_hurtDownFrame > 0 && ++_hurtDownFrame < 20)
     #        if(_actionCtrler.dashJump()) { doHurtDownJump(); _hurtDownFrame = 0; }
-    #   而 `FighterKeyCtrler.dashJump()` = `GameInputer.dash(inputType, _justDown)`
-    #   —— **就是按 L（dash）**，而且是"刚按下"（边沿触发）。
-    #   => 倒地期间快速点一下 L 就能立刻起身。以前完全没用过。
+    #   and `FighterKeyCtrler.dashJump()` = `GameInputer.dash(inputType, _justDown)`
+    #   -- **that is pressing L (dash)**, and it has to be a "fresh press" (edge trigger).
+    #   => Tapping L quickly while downed gets you up immediately. Never used before.
     "recover": (("dash",), 3),
     "wankai": (("attack", "jump"), 8),
     "wankaiW": (("up", "attack", "jump"), 8),
     "wankaiS": (("down", "attack", "jump"), 8),
 }
 
-# 招式气量消耗（源码：bisha=100、bishaSUPER=300）
+# Qi cost per move (source: bisha=100, bishaSUPER=300)
 ACTION_QI_COST: dict[str, int] = {
     "noop": 0, "left": 0, "right": 0, "jump": 0, "defend": 0, "attack": 0,
     "skill1": 0, "skill2": 0, "zhao1": 0, "zhao2": 0, "zhao3": 0,
     "catch1": 0, "airAttack": 0, "airSkill": 0, "ghostStep": 0, "assist": 0,
     "bisha": 100, "bishaUP": 100, "bishaSUPER": 300, "airBisha": 100,
 }
-# 只在空中可用 / 只在地面可用（给动作掩码用）
+# Air-only / ground-only (used for the action mask)
 AIR_ONLY_ACTIONS: frozenset[str] = frozenset({"airAttack", "airBisha", "airSkill"})
 GROUND_ONLY_ACTIONS: frozenset[str] = frozenset(
     {"skill1", "skill2", "zhao1", "zhao2", "zhao3", "catch1",
      "bisha", "bishaUP", "bishaSUPER", "ghostStep", "assist", "defend"}
 )
 
-# ---------------------------------------------------------------- 状态向量
+# ---------------------------------------------------------------- state vector
 
-# 归一化量程（**以运行时实测为准**，不是源码常量）
+# Normalisation ranges (**based on runtime measurements**, not source constants)
 #
-# ★ 重要教训：`GameConfig.FIGHTER_HP_MAX = 1000` 是**源码里的默认常量**，
-#   但运行时角色的实际血量上限是 **2000**（桥接实测 hp=hpMax=2000）。
-#   源码里 `hp = customHpMax * GameData.I.config.fighterHP * messionRate`，
-#   角色的 customHpMax 是 2000。
+# ★ Important lesson: `GameConfig.FIGHTER_HP_MAX = 1000` is the **default constant in the
+#   source**, but the actual runtime HP ceiling is **2000** (the bridge measured hp=hpMax=2000).
+#   In the source `hp = customHpMax * GameData.I.config.fighterHP * messionRate`,
+#   and a character's customHpMax is 2000.
 #
-#   我按 1000 去找内存里的血量，锚定窗口写 [850,1150] —— **永远匹配不上 2000**，
-#   三轮扫描方向从一开始就偏了。
+#   I went hunting for HP in memory assuming 1000, with the anchor window written as
+#   [850,1150] -- it **could never match 2000**, so all three scan directions were off from
+#   the very start.
 #
-#   **读常量定义 ≠ 读运行时值。以运行时为准。**
-#   更稳的做法是按各自的 `hpMax` 归一化（见 state.py），
-#   这样换角色/换关卡都不会错；HP_MAX 只作为兜底默认值。
+#   **Reading a constant definition != reading the runtime value. Trust the runtime.**
+#   The more robust approach is to normalise by each side's own `hpMax` (see state.py),
+#   which stays correct across characters/levels; HP_MAX remains only as a fallback default.
 HP_MAX = 2000.0
 MP_MAX = 300.0
 ARENA_WIDTH = 1280.0
 ARENA_HEIGHT = 720.0
-PLAYER_STATE_IDS = 16  # 游戏内部状态号的上界（one-hot 长度）
-# 运行时实测的真实状态号（见 docs/BRIDGE.md）
+PLAYER_STATE_IDS = 16  # upper bound on the in-game state number (one-hot length)
+# The real state numbers measured at runtime (see docs/BRIDGE.md)
 STATE_IDLE = 0
 STATE_ATTACK = 10
-STATE_RANGED = 11     # zhao1（U 远攻）
+STATE_RANGED = 11     # zhao1 (U long-range attack)
 STATE_JUMP = 14
 STATE_HURT = 22
 
-# 输入给网络的维度：
-#   自己 7 维(归一化) + 对手 7 维 + 相对量 4 维 + 状态 one-hot 16*2 维
+# Dimensions fed to the network:
+#   self 7 dims (normalised) + opponent 7 dims + relative 4 dims + state one-hot 16*2 dims
 STATE_DIM_PER_PLAYER = 7
 STATE_DIM_RELATIVE = 4
 STATE_DIM = (
@@ -258,22 +264,23 @@ STATE_DIM = (
     + STATE_DIM_RELATIVE
     + PLAYER_STATE_IDS * 2
 )
-# 相邻两帧拼接，给 MLP 提供速度信息（低维状态 + 帧堆叠，不上 CNN）
+# Concatenate two adjacent frames to give the MLP velocity information (low-dim state +
+# frame stacking, no CNN)
 FRAME_STACK = 2
 
 
-# ---------------------------------------------------------------- 读取计划（阶段 1 产物）
+# ---------------------------------------------------------------- read plan (stage 1 output)
 
 @dataclass(frozen=True)
 class FieldSpec:
-    """一个可读字段。
+    """One readable field.
 
-    三种解析方式（按顺序尝试）：
-      1. ``address``      绝对地址（ASLR 关掉时才有意义，一般不用）
-      2. ``module+offset`` 模块基址 + 静态偏移（需要 pointer 链时用 pointers）
-      3. ``pattern``      特征码（推荐：抗版本变化）
+    Three ways to resolve it (tried in order):
+      1. ``address``       absolute address (only meaningful with ASLR off, generally unused)
+      2. ``module+offset`` module base + static offset (use pointers when a pointer chain is needed)
+      3. ``pattern``       signature pattern (recommended: survives version changes)
 
-    ``pointers`` 是多级指针偏移链，最后再叠加 ``offset``。
+    ``pointers`` is a multi-level pointer offset chain, with ``offset`` added on at the end.
     """
 
     name: str
@@ -282,10 +289,10 @@ class FieldSpec:
     offset: int = 0
     pointers: tuple[int, ...] = ()
     address: int | None = None
-    pattern: str | None = None  # 例: "48 8B 05 ?? ?? ?? ?? 48 85 C0"
-    pattern_offset: int = 0  # 命中后从这里取 4/8 字节当基址
-    pattern_rip: bool = False  # 命中处是 RIP 相对寻址（lea/mov [rip+disp]）
-    scale: float = 1.0  # 读出来先乘这个（float 血量转 int 等）
+    pattern: str | None = None  # e.g. "48 8B 05 ?? ?? ?? ?? 48 85 C0"
+    pattern_offset: int = 0  # take 4/8 bytes from here as the base address after a hit
+    pattern_rip: bool = False  # the hit site uses RIP-relative addressing (lea/mov [rip+disp])
+    scale: float = 1.0  # multiply the read value by this first (float HP to int, etc.)
     clamp: tuple[float, float] | None = None
 
     def to_json(self) -> dict[str, Any]:
@@ -323,7 +330,7 @@ class FieldSpec:
 
 @dataclass
 class PlayerPlan:
-    """一方的字段集合（P1 / P2 各一份）。"""
+    """The field set for one side (one copy for P1, one for P2)."""
 
     fields: dict[str, FieldSpec] = field(default_factory=dict)
 
@@ -336,7 +343,7 @@ class PlayerPlan:
 
     @staticmethod
     def standard(prefix: str) -> "PlayerPlan":
-        """生成 stage-1 需要的标准字段占位（待填 module/offset/pattern）。"""
+        """Build the standard field placeholders stage 1 needs (module/offset/pattern to be filled in)."""
         names = ("x", "y", "hp", "mp", "state", "facing", "hitstun")
         return PlayerPlan(
             {n: FieldSpec(name=f"{prefix}_{n}") for n in names}
@@ -345,14 +352,14 @@ class PlayerPlan:
 
 @dataclass
 class MemoryPlan:
-    """整个读取计划：进程名 + P1/P2 字段 + 帧号。"""
+    """The whole read plan: process name + P1/P2 fields + frame counter."""
 
     process_name: str = BVN_PROCESS_CANDIDATES[0]
-    module_name: str | None = None  # 留空则用主模块
+    module_name: str | None = None  # leave empty to use the main module
     p1: PlayerPlan = field(default_factory=lambda: PlayerPlan.standard("p1"))
     p2: PlayerPlan = field(default_factory=lambda: PlayerPlan.standard("p2"))
-    frame: FieldSpec | None = None  # 有全局帧计数就读，没有就本地计数
-    verified: bool = False  # 是否已在真机验证过
+    frame: FieldSpec | None = None  # read a global frame counter if there is one, otherwise count locally
+    verified: bool = False  # whether this has been verified on the real machine
     note: str = ""
 
     def to_json(self) -> dict[str, Any]:
@@ -394,38 +401,39 @@ class MemoryPlan:
         return MemoryPlan.from_json(json.loads(path.read_text(encoding="utf-8")))
 
 
-# ---------------------------------------------------------------- 按键映射（阶段 2）
+# ---------------------------------------------------------------- key mapping (stage 2)
 
-# 逻辑键名 -> 游戏里的物理键。默认值来自 OpenBVN 3.4 出厂设置，
-# 出厂默认键位。**依据反编译源码 vo/ConfigVO.as:55-59 的 setDefaultConfig()**，
-# 不是猜的。参数顺序（KeyConfigVO.setKeys）：
+# Logical key name -> physical key in the game. The defaults come from the OpenBVN 3.4
+# factory settings,
+# the factory default key bindings. **Based on decompiled source vo/ConfigVO.as:55-59
+# setDefaultConfig()**, not guesses. Parameter order (KeyConfigVO.setKeys):
 #     up, down, left, right, attack, jump, dash, skill, superKill, beckons
-# P1/P2 的 case 0/1 都是： W, S, A, D, J, K, L, U, I, O
-# 注意：
-#   * jump 是 **K**（不是 W；W 是 up 方向键）
-#   * dash 是 **L**（配合 down 出替身术 ghostStep）
-#   * 游戏里**没有独立防御键**：源码 FighterKeyCtrler.defense() = GameInputer.down()
+# case 0/1 for P1/P2 are both: W, S, A, D, J, K, L, U, I, O
+# Note:
+#   * jump is **K** (not W; W is the up direction key)
+#   * dash is **L** (combined with down it produces the substitution jutsu ghostStep)
+#   * the game has **no dedicated guard key**: source FighterKeyCtrler.defense() = GameInputer.down()
 DEFAULT_KEYMAP: dict[str, str] = {
-    # 方向
+    # directions
     "up": "w",
     "down": "s",
     "left": "a",
     "right": "d",
-    # 动作
+    # actions
     "attack": "j",       # attack
-    "jump": "k",         # jump（K！）
+    "jump": "k",         # jump (K!)
     "dash": "l",         # dash
-    "skill": "u",        # skill（抓）
-    "bisha": "i",        # superSkill（必杀）
-    "switch": "o",       # beckons（召唤援助）
-    # 菜单/控制
+    "skill": "u",        # skill (grab)
+    "bisha": "i",        # superSkill (special)
+    "switch": "o",       # beckons (summon assist)
+    # menu/control
     "confirm": "j",
     "pause": "escape",
 }
 
 
 def load_keymap(path: Path | str = DEFAULT_KEYMAP_PATH) -> dict[str, str]:
-    """读按键映射；文件不存在则返回默认值（不自动写盘）。"""
+    """Read the key mapping; if the file does not exist return the defaults (no automatic write)."""
     path = Path(path)
     if not path.exists():
         return dict(DEFAULT_KEYMAP)
@@ -447,11 +455,11 @@ def save_keymap(keymap: dict[str, str], path: Path | str = DEFAULT_KEYMAP_PATH) 
     return path
 
 
-# ---------------------------------------------------------------- 环境开关
+# ---------------------------------------------------------------- environment switches
 
 
 def mock_enabled(argv: list[str] | None = None, default: bool = False) -> bool:
-    """``--mock`` 命令行开关或 ``BVN_MOCK=1`` 环境变量。"""
+    """The ``--mock`` command-line switch or the ``BVN_MOCK=1`` environment variable."""
     import sys
 
     args = sys.argv[1:] if argv is None else argv

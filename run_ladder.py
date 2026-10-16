@@ -1,17 +1,18 @@
-"""跑 N 场**完整比赛**（三局两胜）并汇总分布。
+"""Run N **full matches** (best of three) and summarise the distribution.
 
-**为什么需要它**（口径教训，见 HANDOFF AE 节）：
-  单场数据波动极大 —— 同样是 lv1，我观察到过
-    承受 0 / 承受 295 / 承受 570
-  拿单场说"改好了/改坏了"都是**过拟合噪声**。
-  必须有**多场分布**才能判断改动是不是净收益。
+**Why this is needed** (a lesson about measurement conventions, see HANDOFF section AE):
+  Single-match numbers swing wildly — at the same lv1 I have observed
+    taken 0 / taken 295 / taken 570
+  Reading "this fixed it / this broke it" off a single match is all **overfit noise**.
+  You need a **multi-match distribution** to tell whether a change is a net gain.
 
-流程（每场都走完整校验，避免"开局就歪了"污染统计）：
-  1. `go_vscpu`（窗口校正 + 面板读回校验 + 开局校验）
-  2. `match_run`（三局两胜，记每局打出/承受）
-  3. 收集该场结果（比分、每局伤害、动作分布、新机制使用）
+Flow (every match goes through the full verification, so a run that "went crooked at
+match start" cannot pollute the statistics):
+  1. `go_vscpu` (window correction + panel read-back verification + match-start verification)
+  2. `match_run` (best of three, recording dealt/taken per round)
+  3. collect that match's results (score, damage per round, action distribution, new-mechanic usage)
 
-用法::
+Usage::
     python run_ladder.py --matches 5
     python run_ladder.py --matches 5 --minutes 5
 """
@@ -32,9 +33,11 @@ sys.path.insert(0, str(ROOT))
 OUT = ROOT / "runs" / "ladder"
 
 ROUND_RE = re.compile(
-    r"小局 (?P<n>\d+) 结束：(?P<w>P\d) 拿下\s+比分 (?P<sc>\d+-\d+)\s+"
-    r"本局打出 (?P<dealt>[\d.]+) / 承受 (?P<taken>[\d.]+)")
-MATCH_RE = re.compile(r"整场结束：(?P<r>win|lose)\s+最终比分 (?P<sc>\d+-\d+)")
+    r"round (?P<n>\d+) over: (?P<w>P\d) takes it\s+"
+    r"score (?P<sc>\d+-\d+)\s+this round dealt (?P<dealt>[\d.]+) / "
+    r"taken (?P<taken>[\d.]+)")
+MATCH_RE = re.compile(
+    r"match over: (?P<r>win|lose)\s+final score (?P<sc>\d+-\d+)")
 
 
 def run(cmd: list[str], log: Path) -> str:
@@ -54,31 +57,35 @@ def main() -> int:
     ap.add_argument("--p1", default="ichigo")
     ap.add_argument("--p2", default="naruto")
     ap.add_argument("--no-restart", action="store_true",
-                    help="不重开局（假设游戏自己在对局里）")
+                    help="do not restart the match (assume the game is already in one)")
     args = ap.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
     results: list[dict] = []
-    print(f"[ladder] 跑 {args.matches} 场完整比赛（三局两胜，lv 以桥接为准）")
+    print(f"[ladder] running {args.matches} full matches (best of three, lv is whatever the bridge says)")
     for i in range(1, args.matches + 1):
-        print(f"\n===== 第 {i}/{args.matches} 场 =====")
+        print(f"\n===== match {i}/{args.matches} =====")
         if not args.no_restart:
-            print("  [1/2] 开局（含校验）")
+            print("  [1/2] match start (with verification)")
             out = run([sys.executable, "go_vscpu.py", "--p1", args.p1,
                        "--p2", args.p2, "--p1-fz", "kon", "--p2-fz", "gaara"],
                       OUT / f"m{i}_start.log")
-            if "开局校验通过" not in out:
-                print("  ❌ 开局校验没过，跳过这场")
-                results.append({"i": i, "ok": False, "why": "开局校验失败"})
+            # Matches go_vscpu.py's success line:
+            #   [go] OK match-start verification passed (t=4.2s)
+            if "match-start verification passed" not in out:
+                print("  ❌ match-start verification did not pass, skipping this match")
+                results.append({"i": i, "ok": False, "why": "match-start verification failed"})
                 continue
             time.sleep(3)
-        print("  [2/2] 打整场")
+        print("  [2/2] play the full match")
         out = run([sys.executable, "match_run.py", "--max-minutes",
                    str(args.minutes)], OUT / f"m{i}_match.log")
         rounds = [m.groupdict() for m in ROUND_RE.finditer(out)]
         mres = MATCH_RE.search(out)
-        lv = re.search(r"难度 aiLevel=(\d+)", out)
-        # 读动作分布
+        # Matches match_run.py's line:
+        #   [match] difficulty aiLevel=3 aiModel=3
+        lv = re.search(r"difficulty aiLevel=(\d+)", out)
+        # read the action distribution
         st = Counter()
         fp = ROOT / "runs" / "match_run" / "frames.json"
         if fp.exists():
@@ -100,62 +107,62 @@ def main() -> int:
         }
         results.append(rec)
         print(f"  -> {rec['result']} {rec['score']}  lv{rec['lv']}  "
-              f"小局 {[(r['winner'], int(r['dealt']), int(r['taken'])) for r in rec['rounds']]}")
+              f"rounds {[(r['winner'], int(r['dealt']), int(r['taken'])) for r in rec['rounds']]}")
 
-    # ---- 汇总 ----
+    # ---- summary ----
     print("\n" + "=" * 74)
-    print("汇总（多场分布）")
+    print("summary (multi-match distribution)")
     print("=" * 74)
     good = [r for r in results if r.get("ok")]
-    print(f"  完成 {len(good)}/{args.matches} 场")
+    print(f"  completed {len(good)}/{args.matches} matches")
     if not good:
-        print("  没有有效场次")
+        print("  no valid matches")
         return 1
     wins = sum(1 for r in good if r["result"] == "win")
-    print(f"  整场战绩: {wins} 胜 {len(good) - wins} 负  "
-          f"（胜率 {100 * wins / len(good):.0f}%）")
+    print(f"  match record: {wins} wins {len(good) - wins} losses  "
+          f"(win rate {100 * wins / len(good):.0f}%)")
     lvs = Counter(r["lv"] for r in good)
-    print(f"  难度: {dict(lvs)}")
+    print(f"  difficulty: {dict(lvs)}")
 
     dealt = [x["dealt"] for r in good for x in r["rounds"] if x["dealt"] > 0]
     taken = [x["taken"] for r in good for x in r["rounds"]]
-    print(f"\n  每小局打出: n={len(dealt)}  中位 {statistics.median(dealt):.0f}  "
-          f"均值 {statistics.mean(dealt):.0f}  范围 {min(dealt):.0f}~{max(dealt):.0f}")
-    print(f"  每小局承受: n={len(taken)}  中位 {statistics.median(taken):.0f}  "
-          f"均值 {statistics.mean(taken):.0f}  范围 {min(taken):.0f}~{max(taken):.0f}")
+    print(f"\n  dealt per round: n={len(dealt)}  median {statistics.median(dealt):.0f}  "
+          f"mean {statistics.mean(dealt):.0f}  range {min(dealt):.0f}~{max(dealt):.0f}")
+    print(f"  taken per round: n={len(taken)}  median {statistics.median(taken):.0f}  "
+          f"mean {statistics.mean(taken):.0f}  range {min(taken):.0f}~{max(taken):.0f}")
 
-    # 每场一行的分布（这是判断"净收益"的关键）
-    print("\n  逐小局（场-局: 胜者 打出/承受）:")
+    # one line per match, distribution (this is the key to judging "net gain")
+    print("\n  per round (match-round: winner dealt/taken):")
     for r in good:
         row = "  ".join(f"{x['n']}:{x['winner']} {int(x['dealt'])}/{int(x['taken'])}"
                         for x in r["rounds"])
-        print(f"    第{r['i']}场 ({r['score']})  {row}")
+        print(f"    match {r['i']} ({r['score']})  {row}")
 
-    # 机制使用
+    # mechanic usage
     agg = Counter()
     for r in good:
         agg.update({int(k): v for k, v in (r["st"] or {}).items()})
     tot = sum(agg.values()) or 1
-    names = {10: "普攻J", 11: "技能U", 12: "必杀I/wi", 13: "超必杀si",
-             14: "跳", 15: "冲刺L", 20: "防御", 21: "受击", 22: "击飞",
-             23: "倒地", 40: "收招", 50: "★万解★"}
-    print(f"\n  动作分布（所有场次合计 {tot} 帧）:")
+    names = {10: "normal J", 11: "skill U", 12: "special I/wi", 13: "super si",
+             14: "jump", 15: "dash L", 20: "guard", 21: "hurt", 22: "launched",
+             23: "knockdown", 40: "recovery", 50: "★Bankai★"}
+    print(f"\n  action distribution ({tot} frames across all matches):")
     for k in (11, 14, 10, 0, 40, 20, 12, 15, 21, 23, 13, 50):
         if agg.get(k):
             print(f"    st={k:<3} {names.get(k, '?'):<9} "
                   f"{100 * agg[k] / tot:>5.1f}%")
-    print(f"\n  ★ 新机制使用:")
-    print(f"    万解 st=50    : {agg.get(50, 0)} 帧")
-    print(f"    冲刺L st=15   : {agg.get(15, 0)} 帧")
-    print(f"    受击 st=21    : {100 * agg.get(21, 0) / tot:.1f}%")
-    print(f"    倒地 st=23    : {100 * agg.get(23, 0) / tot:.1f}%")
+    print(f"\n  ★ new-mechanic usage:")
+    print(f"    Bankai st=50   : {agg.get(50, 0)} frames")
+    print(f"    dash L st=15   : {agg.get(15, 0)} frames")
+    print(f"    hurt st=21     : {100 * agg.get(21, 0) / tot:.1f}%")
+    print(f"    knockdown st=23: {100 * agg.get(23, 0) / tot:.1f}%")
 
     (OUT / "summary.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n  明细 -> {OUT / 'summary.json'}")
-    print("\n判读：")
-    print("  * 看**中位数**和**范围**，别只看均值（单场波动很大）")
-    print("  * 承受的中位数是最重要的指标 —— 它直接反映'会不会挨打'")
+    print(f"\n  details -> {OUT / 'summary.json'}")
+    print("\nHow to read this:")
+    print("  * look at the **median** and the **range**, not just the mean (single matches swing wildly)")
+    print("  * the median taken is the single most important metric — it directly reflects 'whether we get hit'")
     return 0
 
 

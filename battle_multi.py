@@ -1,14 +1,21 @@
-"""多局对战：每局重新开局、带模式守卫、最后给战绩 + 置信区间。
+"""Multi-round battles: restart every round, guard the mode, and report the
+score plus a confidence interval at the end.
 
-和 `battle.py` 的区别（都是本会话踩出来的）：
-  * `battle.py` 用 `fixed_flow.py` 开局 —— 而 `fixed_flow` 的 VS CPU 坐标
-    (0.33, 0.638) 在本会话实测会落到 **SINGLE ACRADE** 上（应为 (0.34, 0.653)），
-    模式不可控。这里改成"点开始测试 -> 必要时导航 -> **每局都用 mode 守卫确认**"。
-  * `battle.py` 不检查难度。这里每局都报 `mode / p1IsAI / p2IsAI / aiModel`，
-    并把难度写进结果，避免"以为在打 lv1、其实在打 lv6"的重演。
-  * 每局结束会记录**实际对手**（是不是 AI），不合格的局**标为 invalid 而不是算进胜率**。
+Differences from `battle.py` (all of them learned the hard way this session):
+  * `battle.py` starts matches with `fixed_flow.py` -- and `fixed_flow`'s VS CPU
+    coordinate (0.33, 0.638) measured out this session to land on
+    **SINGLE ACRADE** (it should be (0.34, 0.653)), so the mode is
+    uncontrollable. Here we instead do "click START TEST -> navigate if needed
+    -> **confirm with the mode guard every single round**".
+  * `battle.py` does not check difficulty. Here every round reports
+    `mode / p1IsAI / p2IsAI / aiModel`, and the difficulty goes into the
+    results, so we don't repeat "thought we were fighting lv1, actually
+    fighting lv6".
+  * At the end of each round we record the **actual opponent** (whether it is
+    an AI), and rounds that fail the check are **marked invalid instead of
+    being counted into the win rate**.
 
-用法::
+Usage::
     python battle_multi.py --rounds 3 --rule
     python battle_multi.py --rounds 3 --policy air_chase
     python battle_multi.py --rounds 5 --onnx runs/lv3/policy.onnx
@@ -38,10 +45,12 @@ OUT = Path("runs/battle_multi")
 
 
 def start_fresh_match(hwnd: int, wait: float = 30.0) -> bool:
-    """点「开始测试」拿一局新的（**练习模式**，只为保证 P1 满血起步）。
+    """Click "START TEST" to get a fresh round (**practice mode**, only to make
+    sure P1 starts at full HP).
 
-    ⚠️ 这一步出来的是 mode 40（练习模式，对手是键盘木桩）。
-    真要打 AI 必须再调用 `ensure_vs_cpu()`。
+    ⚠️ What comes out of this step is mode 40 (practice mode, the opponent is a
+    keyboard training dummy).
+    To actually fight the AI you must call `ensure_vs_cpu()` afterwards.
     """
     activate_window(KW)
     time.sleep(0.4)
@@ -93,37 +102,37 @@ def _click(hwnd: int, fx: float, fy: float, wait: float = 2.2) -> None:
 
 
 def ensure_vs_cpu(hwnd: int, attempts: int = 2) -> bool:
-    """确保当前在「电脑对战-单人」(mode 22)。不在就导航过去。
+    """Make sure we are in "VS COMPUTER - SINGLE" (mode 22). Navigate there if not.
 
-    路径（坐标都是本会话实测）：
-        Esc(暂停) -> GAME TITLE -> YES -> 标题菜单
-        -> SINGLE PLAY (0.40, 0.330) -> SINGLE VS CPU (0.34, 0.653) -> 5 步选角
+    Path (all coordinates measured in this session):
+        Esc (pause) -> GAME TITLE -> YES -> title menu
+        -> SINGLE PLAY (0.40, 0.330) -> SINGLE VS CPU (0.34, 0.653) -> 5-step character select
     """
     info = detect_mode()
     if info.mode == 22 and info.p2_is_ai is True and not info.stale:
-        print("[bm]   已经在 mode 22（电脑对战-单人）+ P2=AI")
+        print("[bm]   already in mode 22 (VS COMPUTER - SINGLE) + P2=AI")
         return True
 
     for att in range(1, attempts + 1):
-        print(f"[bm]   切到电脑对战（第 {att}/{attempts} 次尝试）")
+        print(f"[bm]   switching to VS computer (attempt {att}/{attempts})")
         if _live():
             from input_controller import InputController
             c = InputController()
-            c.send_vk(0x1B)          # Esc -> 暂停菜单
+            c.send_vk(0x1B)          # Esc -> pause menu
             c.release_all()
             time.sleep(1.8)
         _click(hwnd, 0.23, 0.115, 2.5)       # GAME TITLE
         _click(hwnd, 0.318, 0.642, 2.5)      # YES
         time.sleep(2.5)
-        for _ in range(3):                    # 清框
+        for _ in range(3):                    # clear the dialog box
             _click(hwnd, 0.505, 0.642, 1.5)
         _click(hwnd, 0.40, 0.330, 2.2)       # SINGLE PLAY
         _click(hwnd, 0.34, 0.653, 3.5)       # SINGLE VS CPU
         for _ in range(3):
             _click(hwnd, 0.505, 0.642, 1.5)
-        for _n, fx, fy in (("自己选角", 0.035, 0.213), ("对面选角", 0.625, 0.213),
-                           ("自己支援", 0.333, 0.855), ("对面支援", 0.412, 0.855),
-                           ("选场景", 0.50, 0.50)):
+        for _n, fx, fy in (("pick own character", 0.035, 0.213), ("pick opponent character", 0.625, 0.213),
+                           ("own assist", 0.333, 0.855), ("opponent assist", 0.412, 0.855),
+                           ("pick stage", 0.50, 0.50)):
             _click(hwnd, fx, fy, 2.0)
         f0 = _frame()
         t0 = time.time()
@@ -132,7 +141,7 @@ def ensure_vs_cpu(hwnd: int, attempts: int = 2) -> bool:
             if _frame() - f0 > 30 and _live():
                 break
         info = detect_mode()
-        print(f"[bm]   结果: mode={info.mode} ({info.name}) p2IsAI={info.p2_is_ai}")
+        print(f"[bm]   result: mode={info.mode} ({info.name}) p2IsAI={info.p2_is_ai}")
         if info.mode == 22 and info.p2_is_ai is True:
             return True
     return False
@@ -148,47 +157,48 @@ def main() -> int:
     ap.add_argument("--expect", default="ai_opponent")
     ap.add_argument("--tag", default="bm")
     ap.add_argument("--no-restart", action="store_true",
-                    help="不点开始测试（假设每局之间游戏会自己重开）")
+                    help="don't click START TEST (assume the game restarts itself between rounds)")
     args = ap.parse_args()
 
     hwnd = find_window(KW)
     if not hwnd:
-        print("找不到游戏窗口")
+        print("game window not found")
         return 2
     OUT.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
     for r in range(1, args.rounds + 1):
         print("\n" + "=" * 64)
-        print(f"[bm] 第 {r}/{args.rounds} 局")
+        print(f"[bm] round {r}/{args.rounds}")
         print("=" * 64)
 
         if not args.no_restart:
             if not start_fresh_match(hwnd):
-                print("[bm] ⚠️ 没能确认新局开始，仍继续")
+                print("[bm] ⚠️ could not confirm a new round started, continuing anyway")
 
-        # ---- ★ 关键：确保在「电脑对战」而不是练习模式 ★ ----
+        # ---- ★ critical: make sure we are in "VS computer", not practice mode ★ ----
         if not ensure_vs_cpu(hwnd):
-            msg = ("无法进入 mode 22（电脑对战-单人）。当前可能是练习模式(40)，"
-                   "那里对手是键盘木桩，赢了不算数 —— 这一局标记为无效。")
-            print(f"[bm] ❌ 第 {r} 局跳过：{msg}", file=sys.stderr)
+            msg = ("cannot get into mode 22 (VS COMPUTER - SINGLE). We are probably in "
+                   "practice mode (40), where the opponent is a keyboard dummy and a win "
+                   "there does not count -- this round is marked invalid.")
+            print(f"[bm] ❌ skipping round {r}: {msg}", file=sys.stderr)
             rows.append({"round": r, "valid": False, "reason": msg,
                          "mode": detect_mode().mode})
             continue
 
-        # ---- 每局都做模式守卫 ----
+        # ---- mode guard on every round ----
         try:
             info = require_mode(args.expect)
         except ModeMismatch as exc:
-            print(f"[bm] ❌ 第 {r} 局跳过（模式不合格）：{exc}", file=sys.stderr)
+            print(f"[bm] ❌ skipping round {r} (mode not acceptable): {exc}", file=sys.stderr)
             rows.append({"round": r, "valid": False, "reason": str(exc)[:200]})
             continue
         print(f"[bm] ✅ {info.summary()}")
-        print(f"[bm]    难度 aiLevel={info.ai_level} aiModel={info.ai_model}")
+        print(f"[bm]    difficulty aiLevel={info.ai_level} aiModel={info.ai_model}")
 
         out_json = OUT / f"{args.tag}_r{r}.json"
         if args.policy == "air_chase":
-            # 空中追击策略走自己的脚本，跑固定秒数
+            # the air-chase policy has its own script and runs for a fixed number of seconds
             cmd = [PY, "air_chase.py", "--seconds", str(args.seconds),
                    "--out", str(OUT / f"{args.tag}_r{r}_air")]
         else:
@@ -201,7 +211,7 @@ def main() -> int:
         print("  " + " ".join(cmd))
         rc = subprocess.call(cmd)
 
-        # ---- 本局实际发生了什么 ----
+        # ---- what actually happened this round ----
         after = detect_mode()
         row: dict = {
             "round": r, "valid": True, "rc": rc,
@@ -232,16 +242,16 @@ def main() -> int:
                             "my_air_pct": sm.get("my_air_pct"),
                             "opp_air_pct": sm.get("opp_air_pct"),
                             "air_attack_per_air_pct": sm.get("air_attack_per_air_pct")})
-        # 只有"确认对手是 AI"的局才算有效战绩
+        # only rounds where we "confirmed the opponent is an AI" count as a real result
         if row.get("p2IsAI") is not True:
             row["valid"] = False
-            row["reason"] = f"p2IsAI={row.get('p2IsAI')}，对手不是 AI"
+            row["reason"] = f"p2IsAI={row.get('p2IsAI')}, the opponent is not an AI"
         rows.append(row)
-        print(f"[bm] 第 {r} 局: {row.get('outcome')}  "
-              f"打出 {row.get('dealt')} / 承受 {row.get('taken')}  "
-              f"对手 P2IsAI={row.get('p2IsAI')}  有效={row['valid']}")
+        print(f"[bm] round {r}: {row.get('outcome')}  "
+              f"dealt {row.get('dealt')} / taken {row.get('taken')}  "
+              f"opponent P2IsAI={row.get('p2IsAI')}  valid={row['valid']}")
 
-    # ---------------- 汇总 ----------------
+    # ---------------- summary ----------------
     valid = [x for x in rows if x.get("valid")]
     wins = [x for x in valid if x.get("outcome") == "win"]
     losses = [x for x in valid if x.get("outcome") == "lose"]
@@ -250,38 +260,38 @@ def main() -> int:
             for x in valid if x.get("outcome") in ("win", "lose", "timeout")]
 
     print("\n" + "=" * 64)
-    print(f"[bm] 汇总（{args.rounds} 局，其中有效 {len(valid)} 局）")
+    print(f"[bm] summary ({args.rounds} rounds, {len(valid)} of them valid)")
     print("=" * 64)
     for x in rows:
         flag = "✅" if x.get("valid") else "⚠️"
-        print(f"  {flag} 第{x['round']}局 {str(x.get('outcome')):<9} "
-              f"打出 {x.get('dealt')} / 承受 {x.get('taken')} "
+        print(f"  {flag} round {x['round']} {str(x.get('outcome')):<9} "
+              f"dealt {x.get('dealt')} / taken {x.get('taken')} "
               f"aiModel={x.get('aiModel')} p2IsAI={x.get('p2IsAI')}"
               + ("" if x.get("valid") else f"  <- {x.get('reason', '')[:60]}"))
 
     if valid:
-        print(f"\n  战绩: {len(wins)} 胜 / {len(losses)} 负 / {len(timeouts)} 平"
-              f"   胜率 {100.0 * len(wins) / len(valid):.0f}%")
+        print(f"\n  score: {len(wins)} wins / {len(losses)} losses / {len(timeouts)} draws"
+              f"   win rate {100.0 * len(wins) / len(valid):.0f}%")
         if nets:
             mean = statistics.mean(nets)
             sd = statistics.stdev(nets) if len(nets) > 1 else 0.0
             half = 1.96 * sd / (len(nets) ** 0.5) if len(nets) > 1 else 0.0
-            print(f"  净伤害 {mean:+.0f}  95% 置信区间 {mean - half:+.0f} ~ {mean + half:+.0f}"
-                  f"   （标准差 {sd:.0f}, n={len(nets)}）")
+            print(f"  net damage {mean:+.0f}  95% confidence interval {mean - half:+.0f} ~ {mean + half:+.0f}"
+                  f"   (std dev {sd:.0f}, n={len(nets)})")
             if len(nets) < 5:
-                print("  ⚠️ n<5，这个区间基本说明不了问题 —— 对比两个策略时尤其别下结论")
+                print("  ⚠️ n<5, this interval basically says nothing -- especially don't draw conclusions when comparing two policies")
             elif half > 150:
                 need = int((1.96 * sd / 150) ** 2) + 1
-                print(f"  ⚠️ 区间宽 {2 * half:.0f}，要压到 ±150 大约需要 {need} 局")
+                print(f"  ⚠️ interval width {2 * half:.0f}, squeezing it to ±150 takes roughly {need} rounds")
     bad = [x for x in rows if not x.get("valid")]
     if bad:
-        print(f"\n  ⚠️ 有 {len(bad)} 局无效（对手不是 AI / 模式不合格）—— "
-              f"这些**没有算进胜率**，但说明流程有问题，值得查")
+        print(f"\n  ⚠️ {len(bad)} rounds are invalid (opponent not an AI / mode not acceptable) -- "
+              f"these **are not counted into the win rate**, but they mean the pipeline is broken and are worth investigating")
 
     (OUT / f"{args.tag}_summary.json").write_text(
         json.dumps({"rounds": rows, "policy": args.policy}, ensure_ascii=False, indent=2),
         encoding="utf-8")
-    print(f"\n[bm] 结果写 {OUT / f'{args.tag}_summary.json'}")
+    print(f"\n[bm] results written to {OUT / f'{args.tag}_summary.json'}")
     return 0
 
 

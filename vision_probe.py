@@ -1,19 +1,22 @@
-"""视觉方案：从血条长度读血量，完全不碰内存。
+"""Vision approach: read health from bar length, without touching memory at all.
 
-为什么这条路更省事：
-  * 一行命令、零配合 —— 不用你在 CE 里扫、不用切 P2、不用刻意挨打
-  * 血条是画在屏幕上的，位置固定，血量 = 条形长度，抗版本变化
-  * 已经确认：窗口客户区 1000x600，位置固定
+Why this route is less hassle:
+  * One command, zero cooperation -- no scanning in CE, no switching to P2, no
+    deliberately taking hits
+  * The health bars are drawn on screen at fixed positions, health = bar length,
+    and it survives version changes
+  * Already confirmed: the window client area is 1000x600, position fixed
 
-代价（要说清）：
-  * 只能拿到"血量比例"，拿不到坐标/气量/状态号 —— 状态向量会比内存方案稀
-  * 需要窗口可见（不能最小化），但不需要前台
+The cost (let's be clear about it):
+  * You only get the "health ratio", not coordinates/qi/state IDs -- the state
+    vector will be sparser than the memory approach
+  * The window must be visible (cannot be minimised), but it does not need focus
 
-用法::
+Usage::
 
-    python vision_probe.py --grab              # 截图存盘，人工看血条在哪
-    python vision_probe.py --find-bars         # 自动定位两根血条
-    python vision_probe.py --watch 30          # 盯 30 秒，记录血条长度变化
+    python vision_probe.py --grab              # grab to disk, eyeball where the bars are
+    python vision_probe.py --find-bars         # locate both health bars automatically
+    python vision_probe.py --watch 30          # watch for 30s, log bar length changes
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from config import ensure_dirs  # noqa: E402
 WINDOW_TITLE_KEYWORD = "火影"
 
 
-# ---------------------------------------------------------------- 窗口
+# ---------------------------------------------------------------- window
 
 
 def find_game_window(keyword: str = WINDOW_TITLE_KEYWORD) -> int | None:
@@ -60,7 +63,7 @@ def find_game_window(keyword: str = WINDOW_TITLE_KEYWORD) -> int | None:
 
 
 def client_rect(hwnd: int) -> tuple[int, int, int, int]:
-    """返回客户区在屏幕上的 (left, top, width, height)。"""
+    """Return the client area's (left, top, width, height) on screen."""
     import ctypes
     from ctypes import wintypes
 
@@ -73,32 +76,32 @@ def client_rect(hwnd: int) -> tuple[int, int, int, int]:
 
 
 def grab_client(hwnd: int) -> np.ndarray:
-    """截取客户区，返回 (H, W, 3) 的 RGB 数组。"""
+    """Capture the client area, returning an (H, W, 3) RGB array."""
     left, top, w, h = client_rect(hwnd)
     img = ImageGrab.grab(bbox=(left, top, left + w, top + h), all_screens=True)
     return np.asarray(img.convert("RGB"), dtype=np.uint8)
 
 
-# ---------------------------------------------------------------- 血条检测
+# ---------------------------------------------------------------- bar detection
 
 
 def colorfulness(rgb: np.ndarray) -> np.ndarray:
-    """饱和度高 = 彩色的 UI 元素；灰/白/黑背景饱和度低。"""
+    """High saturation = a colourful UI element; grey/white/black backgrounds are low saturation."""
     a = rgb.astype(np.int16)
     return a.max(axis=2) - a.min(axis=2)
 
 
 def find_bars(rgb: np.ndarray, min_run: int = 60, min_sat: int = 60) -> list[dict[str, Any]]:
-    """在上半屏找"长条形的彩色区域"，按行的连续长度统计。"""
+    """Look for "long thin colourful regions" in the top half, counting contiguous run length per row."""
     h, w, _ = rgb.shape
     sat = colorfulness(rgb)
     mask = sat >= min_sat
     rows: list[dict[str, Any]] = []
-    for y in range(0, min(h, h // 2)):  # 血条一般在上半屏
+    for y in range(0, min(h, h // 2)):  # health bars are usually in the top half
         m = mask[y]
         if not m.any():
             continue
-        # 找最长连续段
+        # find the longest contiguous run
         idx = np.flatnonzero(m)
         if idx.size < min_run:
             continue
@@ -116,7 +119,7 @@ def find_bars(rgb: np.ndarray, min_run: int = 60, min_sat: int = 60) -> list[dic
             "length": x1 - x0 + 1,
             "mean_rgb": [int(v) for v in seg.mean(axis=0).round()],
         })
-    # 把相邻行合并成条带
+    # merge adjacent rows into bands
     bars: list[dict[str, Any]] = []
     for r in rows:
         if (
@@ -145,10 +148,11 @@ def find_bars(rgb: np.ndarray, min_run: int = 60, min_sat: int = 60) -> list[dic
 
 
 def measure_bar(rgb: np.ndarray, bar: dict[str, Any], min_sat: int = 60) -> int:
-    """在当前帧里量这根血条的实际长度（像素）。
+    """Measure the actual length of this health bar in the current frame (pixels).
 
-    做法：在血条中心那一行上，从条带左端往右扫，
-    直到颜色不再"属于这个条带"（饱和度掉下去或色调突变）为止。
+    Method: on the centre row of the bar, scan rightwards from the band's left
+    end until the colour no longer "belongs to this band" (saturation drops off
+    or the hue jumps).
     """
     y = (bar["y_start"] + bar["y_end"]) // 2
     if y >= rgb.shape[0]:
@@ -163,68 +167,68 @@ def measure_bar(rgb: np.ndarray, bar: dict[str, Any], min_sat: int = 60) -> int:
         c = row[x].astype(np.int16)
         if sat[x] < min_sat:
             break
-        # 色调要和参考色接近（避免把旁边的另一根条算进来）
+        # the hue must be close to the reference colour (so we don't count the other bar next to it)
         if np.abs(c - ref).sum() > 220:
             break
         run += 1
     return run
 
 
-# ---------------------------------------------------------------- 命令
+# ---------------------------------------------------------------- commands
 
 
 def cmd_grab(args: argparse.Namespace) -> int:
     hwnd = find_game_window(args.keyword)
     if hwnd is None:
-        print(f"[vision] 没找到窗口（标题含 {args.keyword!r}）。游戏开着吗？")
+        print(f"[vision] no window found (title containing {args.keyword!r}). Is the game running?")
         return 1
     left, top, w, h = client_rect(hwnd)
-    print(f"[vision] 窗口 hwnd=0x{hwnd:X} 客户区 {w}x{h} @ ({left},{top})")
+    print(f"[vision] window hwnd=0x{hwnd:X} client area {w}x{h} @ ({left},{top})")
     rgb = grab_client(hwnd)
     out = Path(args.out or "runs/grab.png")
     out.parent.mkdir(parents=True, exist_ok=True)
     from PIL import Image
 
     Image.fromarray(rgb).save(out)
-    print(f"[vision] 已存 {out}  ({rgb.shape[1]}x{rgb.shape[0]})")
+    print(f"[vision] saved {out}  ({rgb.shape[1]}x{rgb.shape[0]})")
 
     bars = find_bars(rgb)
-    print(f"[vision] 自动检测到 {len(bars)} 个候选条带：")
+    print(f"[vision] auto-detected {len(bars)} candidate bands:")
     for b in bars[: args.show]:
         print(f"    y={b['y_start']}..{b['y_end']} x={b['x0']}..{b['x1']} "
-              f"长={b['length']} 高={b['height']} 色={b['rgb']}")
+              f"len={b['length']} hgt={b['height']} rgb={b['rgb']}")
     if not bars:
-        print("    没找到。看看 runs/grab.png，血条可能颜色饱和度低或位置特殊。")
+        print("    none found. Look at runs/grab.png; the bars may have low colour saturation or unusual positions.")
     return 0
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
     hwnd = find_game_window(args.keyword)
     if hwnd is None:
-        print(f"[vision] 没找到窗口（标题含 {args.keyword!r}）")
+        print(f"[vision] no window found (title containing {args.keyword!r})")
         return 1
     _, _, w, h = client_rect(hwnd)
-    print(f"[vision] 客户区 {w}x{h}")
+    print(f"[vision] client area {w}x{h}")
 
     if args.bars:
         bars = json.loads(Path(args.bars).read_text(encoding="utf-8"))
-        print(f"[vision] 用 {args.bars} 里的 {len(bars)} 根血条")
+        print(f"[vision] using bars from {args.bars}: {len(bars)} health bars")
     else:
         rgb0 = grab_client(hwnd)
         bars = find_bars(rgb0)
-        print(f"[vision] 自动检测到 {len(bars)} 根血条")
+        print(f"[vision] auto-detected {len(bars)} health bars")
         if not bars:
             return 1
         for b in bars:
-            print(f"    y={b['y_start']}..{b['y_end']} x={b['x0']} 长={b['length']} "
-                  f"色={b['rgb']}")
+            print(f"    y={b['y_start']}..{b['y_end']} x={b['x0']} len={b['length']} "
+                  f"rgb={b['rgb']}")
         Path("config/bars.json").write_text(
             json.dumps(bars, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        print("[vision] 已存 config/bars.json（下次可 --bars config/bars.json 复用）")
+        print("[vision] saved config/bars.json (reuse next time with --bars config/bars.json)")
 
-    print(f"\n[vision] 盯 {args.seconds:.0f}s，每 {args.interval}s 采一次")
-    print("[vision] 请正常打，让双方血量变化")
+    print(f"\n[vision] watching for {args.seconds:.0f}s, sampling every {args.interval}s")
+    print("[vision] please play normally and let both sides' health change")
     series = {i: [] for i in range(len(bars))}
     t0 = time.perf_counter()
     next_t = t0
@@ -241,7 +245,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
             cur = " ".join(f"{series[i][-1]:>4}" for i in series)
             print(f"  [{time.perf_counter() - t0:5.1f}s] {cur}", flush=True)
 
-    print("\n[vision] 血条长度变化统计：")
+    print("\n[vision] health bar length change stats:")
     result = []
     for i, b in enumerate(bars):
         s = np.asarray(series[i], dtype=np.float64)
@@ -254,17 +258,17 @@ def cmd_watch(args: argparse.Namespace) -> int:
             "changes": changes,
             "rgb": b["rgb"],
         })
-        print(f"    条{i}: y={b['y_start']:<4} x0={b['x0']:<5} "
-              f"最长={result[-1]['length_full']:<5} 最短={result[-1]['length_min']:<5} "
-              f"变化次数={changes:<4} 色={b['rgb']}")
+        print(f"    bar{i}: y={b['y_start']:<4} x0={b['x0']:<5} "
+              f"max={result[-1]['length_full']:<5} min={result[-1]['length_min']:<5} "
+              f"changes={changes:<4} rgb={b['rgb']}")
     good = [r for r in result if r["changes"] >= 3 and r["length_full"] > 40]
     if good:
-        print(f"\n[vision] {len(good)} 根条在变化，是血条的候选。")
-        print("        下一步：把 --bars config/bars.json 交给采集脚本，")
-        print("        或者先跑 python vision_probe.py --watch 20 再看一遍确认。")
+        print(f"\n[vision] {len(good)} bars are changing, candidates for health bars.")
+        print("        Next step: hand --bars config/bars.json to the collection script,")
+        print("        or run python vision_probe.py --watch 20 once more to confirm.")
     else:
-        print("\n[vision] 没有条在明显变化。可能刚才没掉血，或者血条被识别错了。")
-        print("        看 runs/grab.png 手动确认血条位置，再调 --min-sat/--min-run。")
+        print("\n[vision] no bar is changing noticeably. Maybe no damage was taken, or the bar was misidentified.")
+        print("        Check runs/grab.png to confirm the bar positions by hand, then retune --min-sat/--min-run.")
     Path("config/bar_watch.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -272,12 +276,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="视觉血条读取（不碰内存）")
+    parser = argparse.ArgumentParser(description="Vision health bar reading (without touching memory)")
     parser.add_argument("--keyword", default=WINDOW_TITLE_KEYWORD)
-    parser.add_argument("--grab", action="store_true", help="截一张图存盘并检测条带")
-    parser.add_argument("--watch", type=float, default=0.0, help="盯多少秒")
+    parser.add_argument("--grab", action="store_true", help="capture one frame to disk and detect bands")
+    parser.add_argument("--watch", type=float, default=0.0, help="how many seconds to watch")
     parser.add_argument("--interval", type=float, default=0.2)
-    parser.add_argument("--bars", default=None, help="复用已检测的血条 json")
+    parser.add_argument("--bars", default=None, help="reuse an already detected health bar json")
     parser.add_argument("--min-sat", type=int, default=60)
     parser.add_argument("--min-run", type=int, default=60)
     parser.add_argument("--show", type=int, default=30)

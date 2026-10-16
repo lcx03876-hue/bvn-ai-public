@@ -1,16 +1,16 @@
-"""核对**当前安装的 SWF** 里所有补丁是否都在。
+"""Verify that every patch is present in the **currently installed SWF**.
 
-这个检查很重要：`set_difficulty.py` 替换的脚本也是 `FighterTester`，
-和"F1 热键 / _testMode 默认 22"在同一个类里 ——
-如果它拿的基准是**旧的** FighterTester.as，就会把那些补丁覆盖掉。
+This check matters: the script that `set_difficulty.py` swaps in is also `FighterTester`,
+in the same class as "the F1 hotkey / _testMode default 22" ——
+if it works from an **old** FighterTester.as baseline, it overwrites those patches.
 
-期望在已装 SWF 里同时存在：
+Expected to all be present in the installed SWF:
   GameCtrler      : bvnExportState / p1IsAI / p1Wins / p1Id / aiModel
   FighterMcCtrler : getActionCtrler
-  GameStartCtrler : skip() 在 renderStart1v1 开头
+  GameStartCtrler : skip() at the start of renderStart1v1
   FighterTester   : keyCode == 112 (F1) / _testMode / AI_level = 1
 
-用法::
+Usage::
     python verify_installed_swf.py
     python verify_installed_swf.py --swf <path>
 """
@@ -31,15 +31,15 @@ DEFAULT_SWF = _game_swf_resolve()
 
 CHECKS = [
     ("GameCtrler", "GameCtrler.as",
-     [("桥接导出", "bvnExportState"), ("比分", "p1Wins"),
-      ("是否AI", "p1IsAI"), ("角色id", "p1Id"), ("难度", "aiModel")]),
+     [("bridge export", "bvnExportState"), ("score", "p1Wins"),
+      ("is AI", "p1IsAI"), ("character id", "p1Id"), ("difficulty", "aiModel")]),
     ("FighterMcCtrler", "FighterMcCtrler.as",
      [("getActionCtrler", "getActionCtrler")]),
     ("GameStartCtrler", "GameStartCtrler.as",
-     [("开场跳过", "skip()")]),
+     [("match-start skip", "skip()")]),
     ("FighterTester", "FighterTester.as",
-     [("F1热键", "112"), ("模式变量", "_testMode"),
-      ("难度", "AI_level = ")]),
+     [("F1 hotkey", "112"), ("mode variable", "_testMode"),
+      ("difficulty", "AI_level = ")]),
 ]
 
 
@@ -50,22 +50,22 @@ def main() -> int:
 
     swf = Path(args.swf)
     if not swf.exists():
-        print(f"❌ 找不到 {swf}")
+        print(f"❌ cannot find {swf}")
         return 2
-    print(f"[chk] SWF: {swf}  ({swf.stat().st_size} 字节)")
+    print(f"[chk] SWF: {swf}  ({swf.stat().st_size} bytes)")
 
     work = Path(__file__).resolve().parent / ".tmp-swfchk"
     shutil.rmtree(work, ignore_errors=True)
     p = subprocess.run([str(FFDEC), "-export", "script", str(work), str(swf)],
                        capture_output=True, text=True)
     if p.returncode != 0:
-        print("FFDec 导出失败:", (p.stderr or "")[-400:])
+        print("FFDec export failed:", (p.stderr or "")[-400:])
 
     ok_all = True
     for label, fname, pats in CHECKS:
         f = next(work.rglob(fname), None)
         if not f:
-            print(f"  ❌ {label:<16} 找不到 {fname}")
+            print(f"  ❌ {label:<16} cannot find {fname}")
             ok_all = False
             continue
         t = f.read_text(encoding="utf-8", errors="replace")
@@ -77,21 +77,21 @@ def main() -> int:
                 ok_all = False
         print(f"  {label:<16} " + "  ".join(marks))
 
-    # 额外：难度确认
+    # Extra: confirm the difficulty
     ft = next(work.rglob("FighterTester.as"), None)
     if ft:
         t = ft.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"AI_level\s*=\s*(\d+)", t)
         if m:
-            print(f"  [难度] 脚本里写着 AI_level = {m.group(1)}"
-                  f"（进对局后桥接的 aiLevel/aiModel 应等于它）")
+            print(f"  [difficulty] the script says AI_level = {m.group(1)}"
+                  f" (after entering a match, the aiLevel/aiModel read over the bridge should equal it)")
     shutil.rmtree(work, ignore_errors=True)
 
     print()
-    print("✅ 所有补丁都在" if ok_all else "❌ 有补丁缺失（见上面 ❌）")
+    print("✅ all patches present" if ok_all else "❌ some patches are missing (see the ❌ above)")
     if not ok_all:
-        print("   多半是某个脚本的 .as 基准不对 —— 用 build_debug.py 重新一次到位地构建，")
-        print("   再单独把难度值改掉（或反过来：改完难度后核对本脚本）。")
+        print("   most likely one script's .as baseline is wrong —— rebuild everything in one go with build_debug.py,")
+        print("   then change the difficulty value on its own (or the other way round: verify with this script after changing the difficulty).")
     return 0 if ok_all else 1
 
 

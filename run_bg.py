@@ -1,6 +1,6 @@
-"""后台跑 bringup_vscpu.py（脱离工具调用的进程组，避免被连带杀掉）。
+"""Run bringup_vscpu.py in the background (in a process group detached from the tool call, so it doesn't get killed along with it).
 
-用法::
+Usage::
     python run_bg.py bringup_vscpu.py --allow-training
     python run_bg.py difficulty_ladder.py --levels 1 --rounds 3
     python run_bg.py --log runs/xx.log bringup_vscpu.py
@@ -43,9 +43,9 @@ def main() -> int:
         fh.flush()
         proc = subprocess.Popen(cmd, cwd=str(ROOT),
                                 stdout=fh, stderr=subprocess.STDOUT)
-    print(f"[bg] pid={proc.pid}  日志={log}")
+    print(f"[bg] pid={proc.pid}  log={log}")
     time.sleep(6)
-    print("[bg] 前几行：")
+    print("[bg] first few lines:")
     for ln in log.read_text(encoding="utf-8", errors="replace").splitlines()[:14]:
         print("   ", ln)
     return 0

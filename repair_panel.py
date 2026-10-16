@@ -1,17 +1,19 @@
-"""把调试面板**全部 7 个字段**一次写对，并读回核对。
+"""Write **all 7 fields** of the debug panel correctly in one pass, then read them back to verify.
 
-**为什么要这个**：面板被游戏按键污染后，字段会**整体错位一格**
-（实测：`p1Id` 变成乱码、`p1Fz=ichigo`、`p2Id=kon`、`地图id=gaara`、`帧率=GenSe`）。
-`go_vscpu.py` 只写 5 个字段，**`帧率`/`回血` 修不到** —— 而 `帧率=GenSe` 会出事。
+**Why this exists**: once the panel has been polluted by game key presses, the fields
+**shift by one slot as a whole**
+(measured: `p1Id` becomes garbage, `p1Fz=ichigo`, `p2Id=kon`, `mapId=gaara`, `fps=GenSe`).
+`go_vscpu.py` only writes 5 fields, so **`fps`/`recvHp` cannot be repaired** -- and
+`fps=GenSe` does cause trouble.
 
-**污染是怎么发生的（重要教训）**：
-  后台 `match_run` 在发游戏按键（D/A/J/K/U/I/O…），
-  同时另一个脚本把焦点点进了面板输入框
-  -> **游戏按键被打进输入框** -> 乱码 + 字段错位。
-  => **绝不要"AI 在打"和"写面板"同时进行。**
+**How the pollution happens (important lesson)**:
+  A background `match_run` is sending game key presses (D/A/J/K/U/I/O...),
+  while another script clicks the focus into a panel input box
+  -> **the game key presses get typed into the input box** -> garbage + shifted fields.
+  => **Never let "the AI is fighting" and "writing the panel" happen at the same time.**
 
-用法::
-    python repair_panel.py                 # 写默认值 + 核对
+Usage::
+    python repair_panel.py                 # write defaults + verify
     python repair_panel.py --p1 ichigo --p2 naruto
 """
 
@@ -41,17 +43,18 @@ def main() -> int:
     ap.add_argument("--p1-fz", default="kon")
     ap.add_argument("--p2-fz", default="gaara")
     ap.add_argument("--map", default="GenSe")
-    # ★ 默认 60（游戏默认值 GameConfig.FPS_GAME）★
-    #   实测：60 FPS 下桥接 15Hz -> 30Hz，**观测延迟 66.6ms -> 33.4ms**，
-    #   而游戏墙钟速度不变（无敌期都是 ~1.8 秒）。
+    # ★ default 60 (the game default, GameConfig.FPS_GAME) ★
+    #   Measured: at 60 FPS the bridge goes 15Hz -> 30Hz, **observation latency 66.6ms -> 33.4ms**,
+    #   while the game's wall-clock speed is unchanged (invincibility is ~1.8 seconds either way).
     ap.add_argument("--fps", default="60")
     ap.add_argument("--recv-hp", default="1")
     args = ap.parse_args()
 
-    # ★ 写面板前先确认没人在发游戏按键（否则按键会打进输入框变乱码）★
+    # ★ Before writing the panel, confirm nobody is sending game key presses
+    #   (otherwise the keys land in the input boxes and become garbage) ★
     try:
         from play_lock import assert_no_playing as _pl_assert
-        _pl_assert("写调试面板")
+        _pl_assert("writing the debug panel")
     except RuntimeError as _pl_err:
         print(_pl_err)
         raise SystemExit(9)
@@ -60,14 +63,14 @@ def main() -> int:
 
     hwnd = find_window(KW)
     if not hwnd:
-        print("❌ 找不到窗口")
+        print("❌ window not found")
         return 2
     subprocess.run([sys.executable, "fix_window.py"],
                    cwd=str(Path(__file__).parent), capture_output=True)
     force_foreground()
     rect = client_rect(hwnd) or (0, 0, 0, 0)
     if rect[2] < 950:
-        print(f"❌ 客户区只有 {rect[2]} 宽")
+        print(f"❌ client area is only {rect[2]} wide")
         return 2
 
     want = {"p1Id": args.p1, "p1Fz": args.p1_fz, "p2Id": args.p2,
@@ -83,14 +86,14 @@ def main() -> int:
     for attempt in range(1, 4):
         img = grab_client(hwnd)
         if not img.size:
-            print("❌ 抓不到画面")
+            print("❌ cannot capture the screen")
             return 2
         xy = {**FALLBACK, **field_centers(img)}
-        print(f"[fix] 第 {attempt} 次：写 {len(want)} 个字段")
+        print(f"[fix] attempt {attempt}: writing {len(want)} fields")
         for key, val in want.items():
             fn = name2field[key]
             if fn not in xy:
-                print(f"    ⚠️ 检测不到 {fn}，跳过")
+                print(f"    ⚠️ cannot detect {fn}, skipping")
                 continue
             cx, cy = xy[fn]
             activate_window(KW)
@@ -101,26 +104,27 @@ def main() -> int:
             time.sleep(0.15)
             ctl.type_text(val)
             time.sleep(0.35)
-        # ★ 不要点舞台来"清焦点" ★
-        #   实测：那个位置在选角界面上会触发 RESELECT 确认框，
-        #   弹框后**后续所有写入全被挡住**（表现为"面板值没变"）。
-        #   AS3 侧已有 FOCUS_OUT 处理器会清焦点，这里什么都不用做。
+        # ★ Do not click the stage to "clear focus" ★
+        #   Measured: at that spot on the character-select screen it triggers the RESELECT
+        #   confirmation box, and once the dialog is up **every subsequent write is blocked**
+        #   (it looks like "the panel values did not change").
+        #   The AS3 side already has a FOCUS_OUT handler that clears focus, so nothing is needed here.
         time.sleep(0.4)
         ok, actual, bad = verify_panel(want, timeout=5.0)
-        print(f"    核对: {'✅ 全部一致' if ok else '❌ 不一致'}")
+        print(f"    verify: {'✅ all match' if ok else '❌ mismatch'}")
         if ok:
             print(f"    {actual}")
             Image.fromarray(grab_client(hwnd)).save("runs/go_vscpu/30_panel_ok.png")
             return 0
         for k, (w, g) in bad.items():
-            print(f"      {k}: 期望 {w!r} 实际 {g!r}")
+            print(f"      {k}: expected {w!r} actual {g!r}")
         Image.fromarray(grab_client(hwnd)).save(
             f"runs/go_vscpu/31_panel_bad{attempt}.png")
 
-    print("\n❌ 三次都没修好。看 runs/go_vscpu/31_panel_bad*.png")
-    print("   常见原因：")
-    print("     * 有对话框挡着（RESELECT / GAME TITLE 确认框）-> 先关掉")
-    print("     * 有别的脚本在发游戏按键（会打进输入框）-> 先停掉")
+    print("\n❌ all three attempts failed. Look at runs/go_vscpu/31_panel_bad*.png")
+    print("   Common causes:")
+    print("     * a dialog is in the way (RESELECT / GAME TITLE confirmation box) -> close it first")
+    print("     * another script is sending game key presses (they land in the input boxes) -> stop it first")
     return 1
 
 

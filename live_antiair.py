@@ -1,10 +1,10 @@
-"""真机量：**对空（↑系）分支到底触发了多少次**。
+"""Real-machine measurement: **how often the anti-air (↑ family) branches actually fire**.
 
-用户说「多用上u上j来打击空中敌人」——但我静态测出来"对手空中"时
-91% 都会选 zhao3。那实战里到底发没发出去？
-本脚本跑一段真机，把对空相关的计数器打出来。
+The user said "use up+u and up+j more to hit airborne enemies" —— but static measurement showed
+that when the opponent is airborne, zhao3 gets picked 91% of the time. Did it ever actually get sent
+in real matches? This script runs a real-machine session and prints the anti-air counters.
 
-用法::
+Usage::
     python live_antiair.py --seconds 60
 """
 
@@ -33,7 +33,7 @@ def main() -> int:
 
     hwnd = find_window("火影")
     if not hwnd:
-        print("❌ 找不到窗口")
+        print("❌ window not found")
         return 2
     force_foreground()
     ctl = InputController()
@@ -46,10 +46,10 @@ def main() -> int:
 
     b = read_bridge()
     if not b or b.get("actionEnable") is not True:
-        print("❌ 不在活对局里")
+        print("❌ not in a live match")
         return 2
 
-    print(f"[aa] 跑 {args.seconds:.0f} 秒…")
+    print(f"[aa] running for {args.seconds:.0f} seconds…")
     t0 = time.time()
     held: tuple[str, ...] = ()
     release_at = 0.0
@@ -96,28 +96,28 @@ def main() -> int:
         ctl.release_all()
 
     print("\n" + "=" * 62)
-    print(f"[aa] 采样 {frames} 帧；**对手在空中** {opp_air_frames} 帧 "
-          f"（{100 * opp_air_frames / max(1, frames):.1f}%）")
-    print(f"\n[aa] 实际发出的动作（次数）:")
+    print(f"[aa] sampled {frames} frames; **opponent airborne** {opp_air_frames} frames "
+          f"({100 * opp_air_frames / max(1, frames):.1f}%)")
+    print(f"\n[aa] actions actually sent (count):")
     for k, v in fired.most_common(16):
-        mark = "  ★↑系" if k in ("zhao3", "skill2", "bishaUP") else ""
+        mark = "  ★↑family" if k in ("zhao3", "skill2", "bishaUP") else ""
         print(f"   {k:<12} {v:>5}{mark}")
     up = sum(v for k, v in fired.items() if k in ("zhao3", "skill2", "bishaUP"))
-    print(f"\n   ★↑系合计发出 **{up}** 次")
-    print(f"\n[aa] 策略内部计数器:")
-    print(f"   对空    {getattr(pol, '_antiair_dbg', {})}")
-    print(f"   第四轮  {getattr(pol, '_round4_dbg', {})}")
-    print(f"   追击    {getattr(pol, '_chase_dbg', {})}")
-    print(f"   超杀位置 {getattr(pol, '_super_dbg', {})}")
-    print(f"   反应    {getattr(pol, '_react_dbg', {})}")
+    print(f"\n   ★↑family total sent **{up}** times")
+    print(f"\n[aa] policy internal counters:")
+    print(f"   anti-air {getattr(pol, '_antiair_dbg', {})}")
+    print(f"   round 4  {getattr(pol, '_round4_dbg', {})}")
+    print(f"   chase    {getattr(pol, '_chase_dbg', {})}")
+    print(f"   super pos {getattr(pol, '_super_dbg', {})}")
+    print(f"   reaction {getattr(pol, '_react_dbg', {})}")
     dbg = getattr(pol, "_react_dbg", {})
     if dbg.get("n"):
-        print(f"   -> 平均 cooldown（夹之前）"
-              f" {dbg['sum_cd_before'] / dbg['n']:.2f} 帧，"
-              f"被夹住 {100 * dbg['clamped'] / dbg['n']:.0f}%")
-    print("\n判读：")
-    print("  * 若 ↑系发出次数接近 0，说明对空分支虽然「会选」但**实战很少走到**")
-    print("    （被更早的分支抢先，或对手滞空时距离/高度不满足）")
+        print(f"   -> average cooldown (before clamping)"
+              f" {dbg['sum_cd_before'] / dbg['n']:.2f} frames, "
+              f"clamped {100 * dbg['clamped'] / dbg['n']:.0f}% of the time")
+    print("\nreading:")
+    print("  * if the ↑ family is sent close to 0 times, the anti-air branches \"do get picked\" but **are rarely reached in real matches**")
+    print("    (an earlier branch pre-empts them, or distance/height does not qualify while the opponent is airborne)")
     return 0
 
 

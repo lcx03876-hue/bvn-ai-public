@@ -1,24 +1,27 @@
-"""阶段 4：训练。两段式 —— 先行为克隆（BC），再 DQN 微调。
+"""Stage 4: training. Two-stage — first behaviour cloning (BC), then DQN fine-tuning.
 
-为什么这么排：
+Why this order:
 
-  1. 纯 DQN 从头学，在这种稀疏奖励 + 60Hz 的格斗游戏里几乎不可能收敛；
-  2. 采集到的数据本身就是"状态 -> 动作"对，先用它做行为克隆，
-     网络至少学会"靠近对手就出拳"这种基本行为；
-  3. 再拿 DQN 在同一个数据上做 off-policy 微调（奖励里的命中/被击信号
-     会把它往"打得准、少挨打"推）。
+  1. Pure DQN from scratch basically cannot converge in a fighting game with
+     rewards this sparse at 60Hz;
+  2. the collected data is itself "state -> action" pairs; behaviour-clone on it
+     first, and the net at least learns basic behaviour like "get close to the
+     opponent and punch";
+  3. then run DQN off-policy fine-tuning on the same data (the hit / hit-taken
+     signal in the reward pushes it towards "land hits accurately, take fewer hits").
 
-损失/目标：
-  * BC ：交叉熵（类别不均衡时可选按类别加权，否则会被 noop 淹没）
-  * DQN：Double DQN + 目标网络 + Huber 损失
+Losses / objectives:
+  * BC : cross-entropy (optionally class-weighted when the classes are imbalanced,
+         otherwise noop drowns everything out)
+  * DQN: Double DQN + target network + Huber loss
 
-产出：
+Outputs:
   runs/<name>/model_bc.pt, model_q.pt, train_log.csv, summary.json
 
-用法::
+Usage::
 
     python train.py --data "data/*.npz" --name demo --bc-epochs 30 --dqn-steps 20000
-    python train.py --data "data/*.npz" --name demo --quick       # 冒烟：几十秒跑完
+    python train.py --data "data/*.npz" --name demo --quick       # smoke: finishes in tens of seconds
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ from nets.model import (  # noqa: E402
 )
 
 
-# ---------------------------------------------------------------- 数据
+# ---------------------------------------------------------------- data
 
 
 def resolve_data(patterns: Sequence[str]) -> list[Path]:
@@ -74,8 +77,9 @@ def load_dataset(files: Sequence[Path]) -> TransitionDataset:
     data = TransitionDataset.load(files)
     if data.obs_dim != OBS_DIM:
         raise SystemExit(
-            f"数据观测维度 {data.obs_dim} != 当前代码的 OBS_DIM {OBS_DIM}。"
-            "说明 config.py 的状态定义变了，旧数据必须重采（或用旧模型）。"
+            f"Data observation dim {data.obs_dim} != OBS_DIM {OBS_DIM} in the current code. "
+            "This means the state definition in config.py changed; the old data must be re-collected "
+            "(or use the old model)."
         )
     return data
 
@@ -159,7 +163,7 @@ def train_bc(
             best_state = {k: v.detach().clone() for k, v in policy.state_dict().items()}
     if best_state is not None:
         policy.load_state_dict(best_state)
-    print(f"  [BC] 最佳验证准确率 = {best_acc:.4f}")
+    print(f"  [BC] best validation accuracy = {best_acc:.4f}")
     return policy
 
 
@@ -194,7 +198,7 @@ def train_dqn(
     target.load_state_dict(qnet.state_dict())
     target.eval()
 
-    # ★ 冻结主干，只训最后一层 ★
+    # ★ Freeze the trunk, train only the last layer ★
     if freeze_trunk:
         _layers = list(qnet.body.net)
         _last = None
@@ -212,26 +216,27 @@ def train_dqn(
                 for _p in _m.parameters():
                     _p.requires_grad_(False)
                     _frozen += _p.numel()
-        print(f"  [DQN] 冻结主干：可训 {_trainable} / 冻结 {_frozen} 参数"
-              f"（只训第 {_last} 层）")
+        print(f"  [DQN] frozen trunk: trainable {_trainable} / frozen {_frozen} params"
+              f" (training only layer {_last})")
 
     _params = [p for p in qnet.parameters() if p.requires_grad]
     opt = torch.optim.Adam(_params, lr=lr)
     buffer = ReplayBuffer(min(buffer_capacity, max(len(data), batch_size * 4)), OBS_DIM, seed)
     buffer.extend(data)
-    print(f"  [DQN] 经验池 = {len(buffer)} 条, 训练 {steps} 步")
+    print(f"  [DQN] replay buffer = {len(buffer)} transitions, training {steps} steps")
 
-    # ★ 数据里出现过的动作（OOD 掩码用）★
-    #   实测本项目有 4/20 个动作是 0 样本 -> 它们的 Q 纯外推，必须屏蔽。
+    # ★ Actions that appear in the data (used for the OOD mask) ★
+    #   Measured in this project: 4/20 actions have 0 samples -> their Q is pure
+    #   extrapolation, so they must be masked.
     _present = torch.zeros(NUM_ACTIONS, dtype=torch.bool, device=device)
     for _a in np.asarray(data.actions).astype(int):
         if 0 <= int(_a) < NUM_ACTIONS:
             _present[int(_a)] = True
     _n_missing = int((~_present).sum())
-    print(f"  [DQN] 数据里出现过的动作 {NUM_ACTIONS - _n_missing}/{NUM_ACTIONS}"
-          f"（{_n_missing} 个 0 样本 -> "
-          f"{'已屏蔽' if mask_ood else '⚠️ 未屏蔽，会被外推高估'}）")
-    print(f"  [DQN] BC 锚定 λ={bc_anchor}  CQL α={cql_alpha}")
+    print(f"  [DQN] actions present in the data {NUM_ACTIONS - _n_missing}/{NUM_ACTIONS}"
+          f" ({_n_missing} with 0 samples -> "
+          f"{'masked' if mask_ood else '⚠️ not masked, will be over-estimated by extrapolation'})")
+    print(f"  [DQN] BC anchor λ={bc_anchor}  CQL α={cql_alpha}")
 
     def epsilon(step: int) -> float:
         frac = min(1.0, step / max(1.0, steps * eps_decay_frac))
@@ -250,11 +255,12 @@ def train_dqn(
         q_all = qnet(obs)
         q = q_all.gather(1, actions).squeeze(1)
         with torch.no_grad():
-            # ★ Double DQN + **OOD 掩码** ★
-            #   原来 `qnet(next_obs).argmax(1)` 对**全部 20 个动作**取 max，
-            #   包括数据里 0 样本的那些 —— 它们的 Q 纯外推、被高估，
-            #   于是 TD 目标在垃圾上 bootstrap，策略去追它们 -> 崩。
-            #   掩码后只在"示范里真做过的动作"里选。
+            # ★ Double DQN + **OOD mask** ★
+            #   Previously `qnet(next_obs).argmax(1)` took the max over **all 20 actions**,
+            #   including the ones with 0 samples in the data — their Q is pure
+            #   extrapolation and over-estimated, so the TD target bootstraps on
+            #   garbage and the policy chases those actions -> collapse.
+            #   With the mask we only pick among "actions actually taken in the demonstrations".
             _na = qnet(next_obs)
             if mask_ood:
                 _na = _na.masked_fill(~_present, -1e9)
@@ -263,12 +269,13 @@ def train_dqn(
             td_target = rewards + gamma * (1.0 - dones) * next_q
         loss = F.smooth_l1_loss(q, td_target)
 
-        # ★ BC 锚定：别让 Q 的 argmax 跑离示范太远（TD3+BC / AWAC 思路）★
+        # ★ BC anchor: keep the Q argmax from drifting too far from the demonstrations
+        #   (the TD3+BC / AWAC idea) ★
         if bc_anchor > 0.0:
             loss = loss + bc_anchor * F.cross_entropy(
                 q_all, actions.squeeze(1))
 
-        # ★ CQL：压低分布外动作的 Q（Conservative Q-Learning）★
+        # ★ CQL: push down the Q of out-of-distribution actions (Conservative Q-Learning) ★
         if cql_alpha > 0.0:
             loss = loss + cql_alpha * (
                 torch.logsumexp(q_all, dim=1) - q).mean()
@@ -302,7 +309,7 @@ def train_dqn(
     return qnet
 
 
-# ---------------------------------------------------------------- 评估
+# ---------------------------------------------------------------- evaluation
 
 
 @torch.no_grad()
@@ -314,7 +321,7 @@ def evaluate_in_mock(
     max_seconds: float = 30.0,
     epsilon: float = 0.0,
 ) -> dict[str, float]:
-    """在模拟游戏里真跑几局，看模型到底会不会打（不是看 loss）。"""
+    """Actually play a few rounds in the mock game to see whether the model can fight (not whether the loss looks good)."""
     from mock_game import MockGame
     from state import StateBuilder
 
@@ -325,11 +332,11 @@ def evaluate_in_mock(
     dealt_total = taken_total = 0.0
     steps_total = 0
     for ep in range(episodes):
-        # **round_reset=False 是必须的**：默认 True 时角色一被打死就立刻
-        # 重置回满血，而下面的循环是"检测到有人 hp<=0 才 break"，
-        # 等 break 出来读到的 hp 已经是重置后的 1000 了，
-        # 于是 `start_hp2 - snap.raw.p2.hp` 恒等于 0 ——
-        # 表现就是"评估里模型打得再好也显示 0 伤害"。
+        # **round_reset=False is mandatory**: with the default True a character is
+        # reset to full health the instant it is killed, while the loop below is
+        # "break once someone's hp<=0" — by the time we break out, the hp we read
+        # is already the post-reset 1000, so `start_hp2 - snap.raw.p2.hp` is always 0 —
+        # which shows up as "a model that fights well still reports 0 damage in eval".
         game = MockGame(
             seed=seed + ep, input_lag=1, noise=0.0, cpu_enabled=True,
             round_reset=False,
@@ -338,10 +345,11 @@ def evaluate_in_mock(
             builder = StateBuilder()
             time.sleep(1 / 60 * 3)
             snap = builder.push(game.read_frame())
-            # **必须从快照读初始血量，不能写死 1000**。
-            # 写死时（HP_MAX 从 1000 改成 2000 之后）:
-            #   dealt = 1000 - p2.hp，而 p2.hp 起始是 2000
-            #   -> 恒为 -1000 + 实际伤害，评估出现"负伤害"这种不可能的值。
+            # **The starting HP must be read from the snapshot, never hard-coded to 1000**.
+            # When it was hard-coded (after HP_MAX went from 1000 to 2000):
+            #   dealt = 1000 - p2.hp, while p2.hp starts at 2000
+            #   -> always -1000 + actual damage, so eval reported the impossible
+            #      value "negative damage".
             start_hp1 = float(snap.raw.p1.hp)
             start_hp2 = float(snap.raw.p2.hp)
             t0 = time.perf_counter()
@@ -386,25 +394,28 @@ def policy_agreement(
     device: torch.device,
     batch: int = 8192,
 ) -> dict[str, float]:
-    """模型在训练数据上**与标注动作的一致率** + 动作分布。
+    """The model's **agreement with the labelled actions** on the training data + the action distribution.
 
-    ★ 为什么必须报这个指标 ★
+    ★ Why this metric has to be reported ★
 
-    这是本项目踩过最贵的一个坑：
-      `policy.onnx`（BC）与标注一致率 68.8%，
-      但 `qnet.onnx`（DQN 微调后）**只剩 4.8%** —— 而 20 个动作随机猜就是 5%。
-      也就是说 **DQN 把 BC 学到的策略完全冲掉了**。
+    This is the most expensive pit this project ever stepped in:
+      `policy.onnx` (BC) agrees with the labels 68.8% of the time,
+      but `qnet.onnx` (after DQN fine-tuning) **is down to 4.8%** — and random
+      guessing over 20 actions is 5%.
+      In other words **DQN completely washed away the policy BC had learned**.
 
-      而 `train.py` 的评估**只报胜率**，不报策略偏离了多少，
-      所以在 mock 里看到"6 胜 0 负"就以为没问题 ——
-      真机上模型却在"一直按 A"乱打（用户实测发现）。
+      Yet the evaluation in `train.py` **only reported the win rate**, never how far
+      the policy had drifted, so seeing "6 wins 0 losses" in the mock looked fine —
+      while on the real game the model was flailing around "holding A the whole time"
+      (the user found this by testing).
 
-      根因：DQN 在离线数据上 off-policy 学习，奖励是
-      `+1命中 / -1被打 / -0.001每帧 / +10赢 / -10输`，
-      每帧时间惩罚 + 稀疏胜负信号 -> 网络学成"少挨打就行"（后退），
-      Q 值尺度从 +2 爆到 +35，把 BC 先验覆盖。
+      Root cause: DQN learns off-policy on offline data, and the reward is
+      `+1 hit / -1 hit taken / -0.001 per frame / +10 win / -10 loss`;
+      a per-frame time penalty + a sparse win/loss signal -> the net learns "just
+      don't take hits" (retreat), the Q scale explodes from +2 to +35 and overrides
+      the BC prior.
 
-    **一致率一崩，胜率再好看也没用**（那是在 mock 里刷出来的）。
+    **Once agreement collapses, a pretty win rate means nothing** (it was farmed in the mock).
     """
     net.eval()
     preds = []
@@ -417,7 +428,7 @@ def policy_agreement(
                 logits = net(x)
             preds.append(logits.argmax(1).cpu())
     pred = torch.cat(preds)
-    # 注意：PyTorch 里 Bool 张量不能直接 .mean()，要先转 float
+    # Note: in PyTorch a Bool tensor can't be .mean()'d directly, cast to float first
     agree = float((pred == acts).float().mean().item())
     counts = torch.bincount(pred, minlength=NUM_ACTIONS).float()
     top_share = float(counts.max().item() / max(1, pred.numel()))
@@ -434,21 +445,21 @@ def policy_agreement(
 
 
 def report_agreement(tag: str, res: dict[str, float], baseline: float | None = None) -> None:
-    line = (f"[agree] {tag:<10} 与标注一致率 {res['agreement'] * 100:5.1f}%  "
-            f"最常输出 {res['top_action']}:{res['top_share'] * 100:.0f}%  "
-            f"(标注最多 {res['label_top_action']}:{res['label_top_share'] * 100:.0f}%)")
+    line = (f"[agree] {tag:<10} agreement with labels {res['agreement'] * 100:5.1f}%  "
+            f"top output {res['top_action']}:{res['top_share'] * 100:.0f}%  "
+            f"(labels top {res['label_top_action']}:{res['label_top_share'] * 100:.0f}%)")
     print(line)
     if res["agreement"] < 0.15:
-        print(f"[agree] ⚠ **{tag} 没学到东西**（随机水平 5%，20 动作）"
-              f" —— 这个权重别拿去真机用")
+        print(f"[agree] ⚠ **{tag} learned nothing** (random level over 20 actions is 5%)"
+              f" — don't take these weights to the real game")
     if baseline is not None and res["agreement"] < baseline * 0.6:
-        print(f"[agree] ⚠ **{tag} 相比 BC 崩了**："
-              f"{baseline * 100:.1f}% -> {res['agreement'] * 100:.1f}%。"
-              f"DQN 微调把策略冲掉了 —— 用 policy.onnx，别用 qnet.onnx")
+        print(f"[agree] ⚠ **{tag} collapsed relative to BC**: "
+              f"{baseline * 100:.1f}% -> {res['agreement'] * 100:.1f}%. "
+              f"DQN fine-tuning washed the policy away — use policy.onnx, not qnet.onnx")
 
 
 def load_checkpoint(path: Path, device: torch.device) -> tuple[PolicyNet | QNet, str]:
-    """从 .pt 载入网络（自动判断是策略还是 Q 网络）。"""
+    """Load a network from a .pt file (automatically tells whether it's a policy or a Q net)."""
     payload = torch.load(path, map_location=device, weights_only=False)
     hidden = tuple(payload.get("hidden", (256, 256)))
     obs_dim = int(payload.get("obs_dim", OBS_DIM))
@@ -482,33 +493,34 @@ def evaluate_checkpoints(
     return out
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- main flow
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="阶段 4：BC + DQN 训练")
+    parser = argparse.ArgumentParser(description="Stage 4: BC + DQN training")
     parser.add_argument("--data", nargs="+", default=[str(DATA_DIR / "*.npz")],
-                        help="npz 文件/目录/通配符（可多个）")
-    parser.add_argument("--name", default="", help="运行名（默认带时间戳）")
-    parser.add_argument("--out", default=str(RUNS_DIR), help="输出根目录")
+                        help="npz files / directories / globs (multiple allowed)")
+    parser.add_argument("--name", default="", help="run name (timestamped by default)")
+    parser.add_argument("--out", default=str(RUNS_DIR), help="output root directory")
     parser.add_argument("--device", default="auto", help="auto/cpu/cuda")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--hidden", nargs="+", type=int, default=[256, 256], help="MLP 隐层")
+    parser.add_argument("--hidden", nargs="+", type=int, default=[256, 256], help="MLP hidden layers")
     parser.add_argument("--val-ratio", type=float, default=0.1)
     parser.add_argument("--bc-epochs", type=int, default=30)
     parser.add_argument("--bc-lr", type=float, default=3e-4)
     parser.add_argument("--bc-batch", type=int, default=256)
     parser.add_argument(
         "--balanced", action="store_true",
-        # 注意：argparse 会对 help 文本做 % 格式化，
-        # 所以这里**不能出现裸的百分号**（会报 badly formed help string）。
-        help="按动作类别加权。**实测有害，除非数据严重失衡否则别加**："
-             "它给稀有类加权，会扭曲输出分布，而行为克隆的目标恰恰是"
-             "匹配示范的分布。实测一致率：real_rule7 不加约 0.92 / 加约 0.81；"
-             "mock 数据 不加约 0.60 / 加约 0.46。"
-             "（当初加它是为了修'稀有动作学不会'，但那个问题的真正原因是"
-             "示范里根本没有那些动作 —— jump/attack 样本全为 0，"
-             "是采样 bug，不是权重问题。）",
+        # Note: argparse does % formatting on help text,
+        # so **no bare percent sign may appear here** (it raises badly formed help string).
+        help="Weight by action class. **Measured harmful; don't add it unless the data is badly imbalanced**: "
+             "it upweights rare classes and distorts the output distribution, while the whole "
+             "point of behaviour cloning is to match the demonstration distribution. Measured agreement: "
+             "real_rule7 about 0.92 without / about 0.81 with; "
+             "mock data about 0.60 without / about 0.46 with. "
+             "(It was originally added to fix 'rare actions never get learned', but the real cause "
+             "of that problem was that those actions simply aren't in the demonstrations — "
+             "jump/attack samples are all 0 — a sampling bug, not a weighting problem.)",
     )
 
     parser.add_argument("--dqn-steps", type=int, default=20000)
@@ -520,33 +532,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--eps-end", type=float, default=0.02)
     parser.add_argument("--eps-decay-frac", type=float, default=0.3)
     parser.add_argument("--buffer", type=int, default=200_000)
-    # ★ 离线 RL 的三个安全机制（见 patch_dqn_offline.py 的说明）★
-    #   踩过的坑：原来只有纯 Bellman + 对全部动作 argmax，
-    #   而数据里 **4/20 个动作是 0 样本** -> Q 外推被高估 ->
-    #   策略去追这些动作 -> 一致率 62.0% -> 1.9%（比随机还差）。
+    # ★ The three safety mechanisms of offline RL (see the notes in patch_dqn_offline.py) ★
+    #   The pit we stepped in: originally it was pure Bellman + argmax over all actions,
+    #   while **4/20 actions have 0 samples** in the data -> their extrapolated Q is
+    #   over-estimated -> the policy chases those actions -> agreement 62.0% -> 1.9% (worse than random).
     parser.add_argument("--dqn-mask-ood", action="store_true", default=True,
-                        help="TD 目标的 argmax 只在数据里出现过的动作上取")
+                        help="take the TD target's argmax only over actions that appear in the data")
     parser.add_argument("--no-dqn-mask-ood", dest="dqn_mask_ood",
                         action="store_false")
     parser.add_argument("--dqn-bc-anchor", type=float, default=1.0,
-                        help="BC 锚定强度 λ：λ*CE(Q, 示范动作)")
+                        help="BC anchor strength λ: λ*CE(Q, demonstration actions)")
     parser.add_argument("--dqn-cql", type=float, default=0.05,
-                        help="CQL 保守惩罚 α：α*(logsumexp Q - Q(s,a_data))")
-    # ★ 冻结主干，只训最后一层 ★
-    #   上一步虽然修好了"机制性崩溃"(一致率 1.9%->64.6%)，
-    #   但真机仍退化(一局 42.7 秒打出 0.0，attack 占 44% 而数据里只 8.4%)
-    #   —— BC 的复合误差：走进示范没见过的状态时策略无约束。
-    #   冻住主干只训决策头，能大幅限制这种漂移。
+                        help="CQL conservative penalty α: α*(logsumexp Q - Q(s,a_data))")
+    # ★ Freeze the trunk, train only the last layer ★
+    #   The previous step fixed the "mechanical collapse" (agreement 1.9%->64.6%),
+    #   but the real game still degraded (a 42.7 s round dealt 0.0, attack made up
+    #   44% of the outputs while it's only 8.4% of the data)
+    #   — BC's compounding error: once it walks into states the demonstrations never
+    #   showed, the policy is unconstrained.
+    #   Freezing the trunk and training only the decision head greatly limits that drift.
     parser.add_argument("--dqn-freeze-trunk", action="store_true", default=False,
-                        help="冻结 MLP 主干，只训最后一层线性头")
-    parser.add_argument("--skip-dqn", action="store_true", help="只做行为克隆")
-    parser.add_argument("--skip-bc", action="store_true", help="跳过 BC，直接 DQN")
-    parser.add_argument("--eval-episodes", type=int, default=3, help="训练后在 mock 里跑几局")
+                        help="freeze the MLP trunk, train only the final linear head")
+    parser.add_argument("--skip-dqn", action="store_true", help="only do behaviour cloning")
+    parser.add_argument("--skip-bc", action="store_true", help="skip BC and go straight to DQN")
+    parser.add_argument("--eval-episodes", type=int, default=3, help="how many rounds to run in the mock after training")
     parser.add_argument("--eval-seconds", type=float, default=30.0)
-    parser.add_argument("--quick", action="store_true", help="冒烟模式：几分钟内跑完")
+    parser.add_argument("--quick", action="store_true", help="smoke mode: finishes in a few minutes")
     parser.add_argument("--eval-only", action="store_true",
-                        help="只评估已训好的权重（不训练），配合 --run-dir 用")
-    parser.add_argument("--run-dir", default=None, help="--eval-only 时要评估的运行目录")
+                        help="only evaluate already-trained weights (no training); use together with --run-dir")
+    parser.add_argument("--run-dir", default=None, help="run directory to evaluate when using --eval-only")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.quick:
@@ -562,34 +576,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.eval_only:
         run_dir = Path(args.run_dir or (Path(args.out) / args.name))
         if not run_dir.exists():
-            print(f"[train] 运行目录不存在: {run_dir}")
+            print(f"[train] run directory does not exist: {run_dir}")
             return 2
-        print(f"[train] 只评估 {run_dir}，设备 = {device}，每局上限 {args.eval_seconds:.0f}s")
+        print(f"[train] evaluating {run_dir} only, device = {device}, per-episode cap {args.eval_seconds:.0f}s")
         result = evaluate_checkpoints(
             run_dir, device, args.eval_episodes, args.eval_seconds, args.seed
         )
         out_path = run_dir / "eval.json"
         out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[train] 评估结果已保存: {out_path}")
+        print(f"[train] eval results saved: {out_path}")
         return 0
 
-    print(f"[train] 设备 = {device}")
+    print(f"[train] device = {device}")
 
     files = resolve_data(args.data)
     if not files:
-        print(f"[train] 没找到数据文件: {args.data}")
-        print("        先跑: python collect_data.py --mock --seconds 300 --policy rule")
+        print(f"[train] no data files found: {args.data}")
+        print("        run this first: python collect_data.py --mock --seconds 300 --policy rule")
         return 2
-    print(f"[train] 数据文件 {len(files)} 个:")
+    print(f"[train] data files: {len(files)}:")
     for f in files:
         print(f"        {f}")
     data = load_dataset(files)
-    print(f"[train] 样本 {len(data)} 条, obs_dim={data.obs_dim}, 动作数={NUM_ACTIONS}")
+    print(f"[train] samples {len(data)}, obs_dim={data.obs_dim}, n_actions={NUM_ACTIONS}")
     counts = data.class_counts()
-    print("[train] 动作分布: " + ", ".join(f"{a}={c}" for a, c in zip(ACTIONS, counts)))
+    print("[train] action distribution: " + ", ".join(f"{a}={c}" for a, c in zip(ACTIONS, counts)))
     if counts.min() == 0:
         missing = [ACTIONS[i] for i, c in enumerate(counts) if c == 0]
-        print(f"[train][warn] 这些动作一个样本都没有: {missing} —— 模型永远学不会它们。")
+        print(f"[train][warn] these actions have not a single sample: {missing} — the model will never learn them.")
 
     name = args.name or f"run_{time.strftime('%Y%m%d_%H%M%S')}"
     run_dir = Path(args.out) / name
@@ -597,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
     log = MetricLog(run_dir / "train_log.csv")
 
     train_ds, val_ds = data.split(args.val_ratio, seed=args.seed)
-    print(f"[train] 训练/验证 = {len(train_ds)}/{len(val_ds)}")
+    print(f"[train] train/val = {len(train_ds)}/{len(val_ds)}")
 
     policy: PolicyNet | None = None
     qnet: QNet | None = None
@@ -626,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
              "n_actions": NUM_ACTIONS, "hidden": list(args.hidden)},
             run_dir / "model_bc.pt",
         )
-        # BC 用余弦退火后 lr 很低，DQN 用新的优化器，所以分开
+        # after cosine annealing the BC lr is very low and DQN uses a fresh optimiser, so keep them separate
     else:
         policy = PolicyNet(OBS_DIM, NUM_ACTIONS, args.hidden).to(device)
 
@@ -650,13 +664,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     summary["train_seconds"] = round(time.perf_counter() - t_start, 1)
 
-    # ★ 策略一致率检查（**这是防"练崩了才发现"的关键一步**）
+    # ★ Policy agreement check (**this is the key step that stops us finding out only after it's broken**)
     #
-    # 训练数据上模型输出与标注动作的一致率。20 个动作随机猜是 5%。
-    # 本项目踩过最贵的坑：BC 一致率 68.8%，DQN 微调后只剩 4.8%
-    # —— 策略被完全冲掉，真机上表现成"一直按 A"乱打。
-    # 而旧版评估**只报胜率**，在 mock 里照样"6 胜 0 负"，完全看不出来。
-    print("\n[train] 策略一致率检查（20 动作随机 = 5%）：")
+    # Agreement between the model's outputs and the labelled actions on the training data.
+    # Random guessing over 20 actions is 5%.
+    # The most expensive pit this project stepped in: BC agreement 68.8%, after DQN
+    # fine-tuning only 4.8% — the policy was completely washed away, which on the real
+    # game showed up as flailing while "holding A".
+    # And the old evaluation **only reported the win rate**, still "6 wins 0 losses" in
+    # the mock, so it was completely invisible.
+    print("\n[train] policy agreement check (20 actions, random = 5%):")
     bc_agree: float | None = None
     try:
         with torch.no_grad():
@@ -670,32 +687,32 @@ def main(argv: list[str] | None = None) -> int:
         if qnet is not None:
             res_q = policy_agreement(qnet, obs_t, act_t, device)
             summary["agreement_dqn"] = res_q
-            report_agreement("DQN 微调后", res_q, baseline=bc_agree)
+            report_agreement("after DQN fine-tune", res_q, baseline=bc_agree)
     except Exception as exc:  # noqa: BLE001
-        print(f"  [warn] 一致率检查失败: {exc}")
+        print(f"  [warn] agreement check failed: {exc}")
 
-    # 行为评估：loss 好看不代表会打
+    # Behavioural evaluation: a good-looking loss doesn't mean it can fight
     if args.eval_episodes > 0 and (policy is not None or qnet is not None):
-        print(f"[train] 在模拟游戏里评估（每局上限 {args.eval_seconds:.0f}s）"
-              "—— 这才是真实水平，不是 loss...")
+        print(f"[train] evaluating in the mock game (per-episode cap {args.eval_seconds:.0f}s)"
+              " — this is the real level, not the loss...")
         try:
             summary["eval"] = evaluate_checkpoints(
                 run_dir, device, args.eval_episodes, args.eval_seconds, args.seed
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"  [warn] 评估失败（不影响权重保存）: {exc}")
+            print(f"  [warn] evaluation failed (doesn't affect weight saving): {exc}")
 
     log.save_summary(run_dir / "summary.json", **summary)
     (run_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"\n[train] 完成，用时 {summary['train_seconds']}s")
-    print(f"        权重: {run_dir / 'model_bc.pt'}")
+    print(f"\n[train] done, took {summary['train_seconds']}s")
+    print(f"        weights: {run_dir / 'model_bc.pt'}")
     if qnet is not None:
-        print(f"        权重: {run_dir / 'model_q.pt'}")
-    print(f"        日志: {run_dir / 'train_log.csv'}")
-    print(f"        摘要: {run_dir / 'summary.json'}")
-    print(f"\n[train] 下一步: python export_onnx.py --run {run_dir}")
+        print(f"        weights: {run_dir / 'model_q.pt'}")
+    print(f"        log: {run_dir / 'train_log.csv'}")
+    print(f"        summary: {run_dir / 'summary.json'}")
+    print(f"\n[train] next step: python export_onnx.py --run {run_dir}")
     return 0
 
 

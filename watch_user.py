@@ -1,23 +1,23 @@
-"""**纯被动观察器** —— 用户自己打，我只记录和分析。
+"""**Purely passive observer** -- the user plays, I only record and analyse.
 
-★ 安全承诺：本脚本**绝不发送任何键盘/鼠标输入** ★
-  （只调用 `read_state()` 读桥接 JSON + `grab_client()` 截图）
-  原因：用户在打，任何注入按键都会和他抢控制权。
+★ Safety promise: this script **never sends any keyboard/mouse input** ★
+  (it only calls `read_state()` to read the bridge JSON + `grab_client()` to screenshot)
+  Reason: the user is playing; any injected key would fight him for control.
 
-记录内容：
-  * 每帧桥接状态 -> `runs/watch_user/frames_*.json`（含 x/y/hp/state/qi）
-  * 每 N 秒一张截图 -> `runs/watch_user/shots/`
-  * 实时打印：双方血量、位置、动作状态、比分
+What gets recorded:
+  * bridge state every frame -> `runs/watch_user/frames_*.json` (with x/y/hp/state/qi)
+  * one screenshot every N seconds -> `runs/watch_user/shots/`
+  * live print: both sides' HP, position, action state, score
 
-结束后自动给一份**复盘**：
-  * 整场与小局成绩（三局两胜口径）
-  * 双方的伤害交换
-  * 关键节点（血量大幅波动、连段、死亡）
-  * 动作状态分布（用户在用什么招）
-  * 距离分布（用户喜欢在什么距离打）
+When it ends it automatically produces a **review**:
+  * match and round results (best-of-three convention)
+  * the damage exchange on both sides
+  * key moments (big HP swings, combos, deaths)
+  * action state distribution (which moves the user is using)
+  * distance distribution (at which distances the user likes to fight)
 
-用法::
-    python watch_user.py                     # 默认记录到 5 分钟或整场结束
+Usage::
+    python watch_user.py                     # by default records for 5 minutes or until the match ends
     python watch_user.py --minutes 8 --shot-every 6
 """
 
@@ -30,10 +30,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from input_controller import find_window  # noqa: E402  只用来拿窗口句柄
+from input_controller import find_window  # noqa: E402  only used to get the window handle
 from panel_check import read_bridge  # noqa: E402
 
-# ★ 互斥锁：我在发游戏按键，别人别写调试面板（否则按键会打进输入框）★
+# ★ Mutex: I am sending game keys, nobody else should write the debug panel (otherwise the keys land in a text box) ★
 try:
     from play_lock import acquire as _pl_acquire
     _pl_acquire('watch_user')
@@ -44,11 +44,11 @@ KW = "火影"
 HZ = 60.0
 OUT = Path("runs/watch_user")
 
-# 动作状态的中文含义（桥接 actionState）
+# Readable names for the action states (bridge actionState)
 STATE_NAMES = {
-    0: "待机", 1: "走", 10: "普攻J", 11: "技能U", 12: "?", 14: "跳",
-    15: "冲/空中", 20: "下段", 21: "受击", 22: "硬直", 23: "倒地",
-    30: "?", 40: "收招", 60: "特殊", 61: "特殊",
+    0: "idle", 1: "walk", 10: "light J", 11: "special U", 12: "?", 14: "jump",
+    15: "dash/air", 20: "low", 21: "hurt", 22: "hitstun", 23: "down",
+    30: "?", 40: "recovery", 60: "special", 61: "special",
 }
 
 
@@ -82,7 +82,7 @@ def main() -> int:
 
     hwnd = find_window(KW)
     if not hwnd:
-        print("❌ 找不到游戏窗口")
+        print("❌ Game window not found")
         return 2
     OUT.mkdir(parents=True, exist_ok=True)
     shots = OUT / "shots"
@@ -91,16 +91,16 @@ def main() -> int:
     from vision_probe import grab_client
 
     print("=" * 74)
-    print("★ 被动观察中 —— 我不会发送任何按键，请放心打 ★")
+    print("★ Passive observation in progress -- I will not send any keys, play without worry ★")
     print("=" * 74)
     d = snap()
     if not d:
-        print("⚠️ 读不到桥接（不在对局里？）—— 先进对局再跑本脚本")
+        print("⚠️ Cannot read the bridge (not in a match?) -- get into a match first, then run this script")
     else:
-        print(f"  开始: mode={d['mode']} aiLevel={d['aiLevel']} "
+        print(f"  start: mode={d['mode']} aiLevel={d['aiLevel']} "
               f"P1={d['p1Id']}(hp {d['p1hp']}) vs P2={d['p2Id']}(hp {d['p2hp']})")
-    print(f"  记录上限 {args.minutes:.0f} 分钟；每 {args.shot_every:.0f} 秒截图")
-    print("  按 Ctrl+C 可提前结束并出复盘\n")
+    print(f"  recording cap {args.minutes:.0f} minutes; screenshot every {args.shot_every:.0f} seconds")
+    print("  Press Ctrl+C to end early and get the review\n")
 
     frames: list[dict] = []
     t0 = time.time()
@@ -121,14 +121,14 @@ def main() -> int:
                 continue
             frames.append(d)
 
-            # 记录小局最低血量
+            # record the lowest HP of the round
             for k in ("p1", "p2"):
                 v = d.get(f"{k}hp")
                 if isinstance(v, (int, float)):
                     if round_min.get(k) is None or v < round_min[k]:
                         round_min[k] = v
 
-            # 比分变化 -> 结算小局
+            # score change -> settle the round
             sc = (d["p1w"], d["p2w"])
             if sc != prev_score and None not in sc:
                 winner = "P1" if (sc[0] or 0) > (prev_score[0] or 0) else "P2"
@@ -138,19 +138,19 @@ def main() -> int:
                      "dealt": dealt, "taken": taken,
                      "start": dict(round_start), "min": dict(round_min)}
                 rounds.append(r)
-                print(f"\n  ★ 小局结束：{winner} 拿下  比分 {sc[0]}-{sc[1]}  "
-                      f"这局你打出 {dealt:.0f} / 承受 {taken:.0f}")
+                print(f"\n  ★ Round over: {winner} takes it  score {sc[0]}-{sc[1]}  "
+                      f"this round you dealt {dealt:.0f} / took {taken:.0f}")
                 prev_score = sc
                 round_start = {"p1": d["p1hp"], "p2": d["p2hp"], "t": now}
                 round_min = {"p1": d["p1hp"], "p2": d["p2hp"]}
 
-            # 实时行（每 2 秒）
+            # live line (every 2 seconds)
             if now - last_live >= 2.0:
                 last_live = now
-                print(f"  {now - t0:5.0f}s  你 hp={d['p1hp']:>6.0f} "
+                print(f"  {now - t0:5.0f}s  you hp={d['p1hp']:>6.0f} "
                       f"st={d['p1st']:<3} x={d['p1x']:>6.0f} qi={d['p1qi']:>5.0f} "
                       f"| AI hp={d['p2hp']:>6.0f} st={d['p2st']:<3} "
-                      f"| 比分 {d['p1w']}-{d['p2w']}")
+                      f"| score {d['p1w']}-{d['p2w']}")
 
             if not args.no_shots and now >= next_shot:
                 next_shot = now + args.shot_every
@@ -165,43 +165,43 @@ def main() -> int:
             else:
                 time.sleep(0.008)
     except KeyboardInterrupt:
-        print("\n[watch] 收到 Ctrl+C，提前结束")
+        print("\n[watch] Ctrl+C received, ending early")
 
     dur = time.time() - t0
     print("\n" + "=" * 74)
-    print(f"复盘（记录 {dur:.0f} 秒 / {len(frames)} 帧）")
+    print(f"Review (recorded {dur:.0f} seconds / {len(frames)} frames)")
     print("=" * 74)
 
-    # 落盘
+    # write to disk
     (OUT / "frames.json").write_text(
         json.dumps(frames, ensure_ascii=False), encoding="utf-8")
 
     if not frames:
-        print("没记录到任何帧")
+        print("No frames recorded")
         return 1
 
-    print(f"\n【小局】共记录 {len(rounds)} 个小局结束")
+    print(f"\n[Rounds] {len(rounds)} round endings recorded in total")
     for i, r in enumerate(rounds, 1):
-        print(f"  第 {i} 局: {r['winner']} 拿下  比分 {r['score']}  "
-              f"你打出 {r['dealt']:.0f} / 承受 {r['taken']:.0f}")
+        print(f"  Round {i}: {r['winner']} takes it  score {r['score']}  "
+              f"you dealt {r['dealt']:.0f} / took {r['taken']:.0f}")
 
-    # 伤害交换
+    # damage exchange
     p1s = [f["p1hp"] for f in frames if isinstance(f.get("p1hp"), (int, float))]
     p2s = [f["p2hp"] for f in frames if isinstance(f.get("p2hp"), (int, float))]
     if p1s and p2s:
-        print(f"\n【血量】你 {p1s[0]:.0f} -> {p1s[-1]:.0f}（最低 {min(p1s):.0f}）；"
-              f"AI {p2s[0]:.0f} -> {p2s[-1]:.0f}（最低 {min(p2s):.0f}）")
+        print(f"\n[HP] you {p1s[0]:.0f} -> {p1s[-1]:.0f} (lowest {min(p1s):.0f}); "
+              f"AI {p2s[0]:.0f} -> {p2s[-1]:.0f} (lowest {min(p2s):.0f})")
 
-    # 动作状态分布
+    # action state distribution
     st1 = Counter(int(f["p1st"]) for f in frames
                   if isinstance(f.get("p1st"), (int, float)))
     tot = sum(st1.values())
-    print(f"\n【你的动作状态】(共 {tot} 帧)")
+    print(f"\n[Your action states] ({tot} frames in total)")
     for k, v in st1.most_common(8):
         name = STATE_NAMES.get(k, "?")
         print(f"   st={k:<3} {name:<6} {v:>6}  {100.0 * v / tot:>5.1f}%")
 
-    # 距离分布
+    # distance distribution
     dists = []
     for f in frames:
         try:
@@ -214,12 +214,12 @@ def main() -> int:
         mid = sum(1 for d in dists if 60 < d <= 150)
         far = sum(1 for d in dists if d > 150)
         n = len(dists)
-        print(f"\n【交战距离】(平均 {statistics.mean(dists):.0f})")
-        print(f"   贴身 <=60   : {100.0 * near / n:>5.1f}%")
-        print(f"   中距 60-150 : {100.0 * mid / n:>5.1f}%")
-        print(f"   远距 >150   : {100.0 * far / n:>5.1f}%")
+        print(f"\n[Engagement distance] (average {statistics.mean(dists):.0f})")
+        print(f"   point blank <=60 : {100.0 * near / n:>5.1f}%")
+        print(f"   mid 60-150       : {100.0 * mid / n:>5.1f}%")
+        print(f"   far >150         : {100.0 * far / n:>5.1f}%")
 
-    # 高度关系
+    # height relationship
     dys = []
     for f in frames:
         try:
@@ -228,11 +228,11 @@ def main() -> int:
             pass
     if dys:
         same = sum(1 for d in dys if abs(d) <= 12)
-        print(f"\n【高度关系】同层(|dy|<=12) {100.0 * same / len(dys):.1f}%  "
-              f"dy 范围 {min(dys):.0f} ~ {max(dys):.0f}")
+        print(f"\n[Height relationship] same level(|dy|<=12) {100.0 * same / len(dys):.1f}%  "
+              f"dy range {min(dys):.0f} ~ {max(dys):.0f}")
 
-    print(f"\n截图在 {shots}/  （{len(list(shots.glob('*.png')))} 张）")
-    print(f"原始帧在 {OUT / 'frames.json'}")
+    print(f"\nScreenshots in {shots}/  ({len(list(shots.glob('*.png')))} images)")
+    print(f"Raw frames in {OUT / 'frames.json'}")
     return 0
 
 

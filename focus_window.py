@@ -1,21 +1,21 @@
-"""可靠地把游戏窗口弄到**真前台**（供写面板/发键前调用）。
+"""Reliably bring the game window to the **real foreground** (call this before writing the panel / sending keys).
 
-为什么需要：
-  `SendInput` 在目标窗口不是前台时会被系统拒绝（实测 `GetLastError=5`，
-  `OSError: SendInput 只发送了 0/1 个事件`）。
-  而 DSH 自己的窗口经常抢焦点 —— 单靠 `SetForegroundWindow` 会被
-  Windows 的前台锁定机制挡住。
+Why this is needed:
+  `SendInput` is refused by the system when the target window is not in the foreground
+  (measured `GetLastError=5`, `OSError: SendInput 只发送了 0/1 个事件`).
+  And DSH's own window keeps stealing focus —— `SetForegroundWindow` on its own gets blocked
+  by Windows' foreground lock.
 
-做法：`AttachThreadInput` 把自己的线程附加到当前前台窗口的线程上，
-      再 `SetForegroundWindow` + `BringWindowToTop` + `SetFocus`，
-      然后**用 `GetForegroundWindow` 核实**（不核实等于没做）。
+Approach: `AttachThreadInput` attaches our own thread to the thread of the
+      current foreground window, then `SetForegroundWindow` + `BringWindowToTop` + `SetFocus`,
+      then **verify with `GetForegroundWindow`** (not verifying is the same as not doing it).
 
-用法（当模块用）::
+Usage (as a module)::
     from focus_window import force_foreground
-    force_foreground()          # 拿到游戏窗口并确保它是前台
+    force_foreground()          # grab the game window and make sure it is in the foreground
 
-命令行::
-    python focus_window.py      # 前置并核实
+Command line::
+    python focus_window.py      # bring to the front and verify
 """
 
 import ctypes
@@ -34,7 +34,7 @@ _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 
 def force_foreground(keyword: str = KW, tries: int = 4) -> int | None:
-    """把游戏窗口弄成前台，返回 hwnd；失败返回 None。"""
+    """Bring the game window to the foreground and return hwnd; None on failure."""
     hwnd = find_window(keyword)
     if not hwnd:
         return None
@@ -71,11 +71,11 @@ def force_foreground(keyword: str = KW, tries: int = 4) -> int | None:
 def main() -> int:
     hwnd = force_foreground()
     if not hwnd:
-        print("❌ 没能把游戏弄成前台")
-        print(f"   当前前台: {foreground_title()!r}")
-        print("   提示：如果屏幕锁定/远程断开，前台句柄会是 0x0，这时发键一定失败。")
+        print("❌ could not bring the game to the foreground")
+        print(f"   current foreground: {foreground_title()!r}")
+        print("   hint: if the screen is locked / the remote session is disconnected, the foreground handle is 0x0, and then key injection is guaranteed to fail.")
         return 1
-    print(f"✅ 游戏已是前台 (0x{hwnd:X})  {foreground_title()!r}")
+    print(f"✅ the game is now in the foreground (0x{hwnd:X})  {foreground_title()!r}")
     return 0
 
 

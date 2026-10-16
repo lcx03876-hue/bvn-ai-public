@@ -1,15 +1,18 @@
-"""把游戏窗口**恢复 + 校正到客户区 1000x600 + 弄成前台**，然后报告状态。
+"""**Restore the game window + correct it to a 1000x600 client area + bring it to the foreground**, then report the status.
 
-为什么单独做这一步：
-  * 窗口可能被**最小化**（实测 `client_rect = (-32000,-32000,0,0)`），
-    这时读不到尺寸、抓图是 0x0、点面板必然失败
-  * 窗口可能被**改小**（实测过一次 735x482）—— 一窄调试面板就跑到窗口外，
-    所有面板坐标失效（见 HANDOFF AA 节）
-  * 还有**前台**问题：`SendInput` 在非前台会被拒绝（GetLastError=5）
+Why this is a separate step:
+  * The window may be **minimized** (observed `client_rect = (-32000,-32000,0,0)`), in
+    which case sizes are unreadable, screenshots come back 0x0, and clicking the panel
+    always fails
+  * The window may have been **shrunk** (observed once at 735x482) — as soon as it gets
+    narrow the debug panel runs outside the window and every panel coordinate becomes
+    invalid (see HANDOFF section AA)
+  * There is also the **foreground** problem: `SendInput` is rejected when the window is
+    not in the foreground (GetLastError=5)
 
-顺序：SW_RESTORE -> SetWindowPos(外框 1016x639) -> 强制前台 -> 核实。
+Order: SW_RESTORE -> SetWindowPos(outer frame 1016x639) -> force foreground -> verify.
 
-用法::
+Usage::
     python fix_window.py
     python fix_window.py --width 1000 --height 600
 """
@@ -43,45 +46,45 @@ def main() -> int:
     u = ctypes.WinDLL("user32", use_last_error=True)
     hwnd = find_window(KW)
     if not hwnd:
-        print("❌ 找不到游戏窗口（游戏没启动？）")
+        print("❌ game window not found (is the game not running?)")
         return 1
     h = wintypes.HWND(hwnd)
 
-    print(f"[win] 初始 client_rect: {client_rect(hwnd)}")
+    print(f"[win] initial client_rect: {client_rect(hwnd)}")
     u.ShowWindow(h, SW_RESTORE)
     time.sleep(0.8)
-    print(f"[win] SW_RESTORE 后: {client_rect(hwnd)}")
+    print(f"[win] after SW_RESTORE: {client_rect(hwnd)}")
 
     u.SetWindowPos(h, wintypes.HWND(-1), 20, 20,
                    args.width + args.border_x, args.height + args.border_y,
                    SWP_SHOWWINDOW)
     time.sleep(1.2)
-    print(f"[win] 校正后 client_rect: {client_rect(hwnd)}")
+    print(f"[win] client_rect after correction: {client_rect(hwnd)}")
 
     fg = force_foreground()
     if not fg:
-        print(f"⚠️ 没能弄成前台（当前: {foreground_title()!r}）—— "
-              f"发键会失败；若是锁屏请先解锁")
+        print(f"⚠️ could not bring it to the foreground (current: {foreground_title()!r}) — "
+              f"key injection will fail; if the screen is locked, unlock it first")
     else:
-        print(f"[win] 前台 OK: {foreground_title()!r}")
+        print(f"[win] foreground OK: {foreground_title()!r}")
 
     img = grab_client(hwnd)
     if img.size:
         cw, ch = img.shape[1], img.shape[0]
-        print(f"[win] 抓图 {cw}x{ch}")
-        # 判断面板是否可达。
-        # ⚠️ 面板在 x=810..1010，而**正常客户区就只有 1000 宽**
-        #    -> 右边缘本来就被裁掉约 10px，这是原版设计，不是问题。
-        #    真正要保证的是**输入框（x≈890）能点到**，
-        #    所以门槛取 950（客户区一窄到 735 时面板整体不可达，见 HANDOFF AA 节）。
+        print(f"[win] grabbed {cw}x{ch}")
+        # Decide whether the panel is reachable.
+        # ⚠️ The panel sits at x=810..1010, while **the normal client area is only 1000 wide**
+        #    -> the right edge is already clipped by ~10px; that is the original design, not a bug.
+        #    What really has to hold is that **the input box (x≈890) is clickable**,
+        #    so the threshold is 950 (at 735 wide the whole panel is unreachable, see HANDOFF AA).
         ok = cw >= 950
-        print(f"[win] 调试面板可达: {'✅' if ok else '❌'} "
-              f"（需要客户区宽 >= 1010，现在 {cw}）")
+        print(f"[win] debug panel reachable: {'✅' if ok else '❌'} "
+              f"(needs client width >= 1010, currently {cw})")
         if not ok:
-            print("      -> 面板跑到窗口外了！所有面板坐标都会点偏（HANDOFF AA 节）")
+            print("      -> the panel ran outside the window! Every panel coordinate will miss (HANDOFF section AA)")
             return 1
     else:
-        print("❌ 抓图是空的")
+        print("❌ the screenshot is empty")
         return 1
     return 0
 

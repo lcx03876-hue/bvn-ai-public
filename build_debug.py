@@ -1,10 +1,11 @@
-"""分步重建 SWF，**保留中间文件**，并把每一步的 FFDec 完整输出打出来。
+"""Rebuild the SWF step by step, **keeping the intermediate files**, and print FFDec's full output for every step.
 
-`build_all.py` 报"替换 FighterMcCtrler 失败"，但同时产出了最终文件 ——
-说明我上面对"哪一步失败"的判断可能不准。这个脚本一步步来，
-每步都核对产出文件的大小和脚本是否真的被替换进去。
+`build_all.py` reported "failed to replace FighterMcCtrler" while still producing the final
+file — which suggests my judgement above about "which step failed" may be off. This script
+goes step by step, verifying at each step the size of the produced file and whether the
+script was really swapped in.
 
-用法::
+Usage::
     python build_debug.py
 """
 
@@ -49,9 +50,9 @@ def main() -> int:
     time.sleep(2)
 
     base = GAME_DIR / "FighterTester.swf"
-    print(f"[dbg] 基准 SWF: {base} ({base.stat().st_size} 字节)")
+    print(f"[dbg] baseline SWF: {base} ({base.stat().st_size} bytes)")
 
-    # 1) 生成 GameCtrler.bridge.as
+    # 1) generate GameCtrler.bridge.as
     p = subprocess.run([PY, "build_bridge.py", "--swf-in", str(base),
                         "--swf-out", str(WORK / "s0.swf")],
                        capture_output=True, text=True, cwd=str(ROOT))
@@ -60,7 +61,7 @@ def main() -> int:
         print(p.stdout[-800:], p.stderr[-800:])
         return 1
 
-    # 2) 修引号
+    # 2) fix quotes
     p = subprocess.run([PY, "fix_bridge_as3_quotes.py"],
                        capture_output=True, text=True, cwd=str(ROOT))
     print(f"[dbg] fix_quotes rc={p.returncode}")
@@ -71,9 +72,9 @@ def main() -> int:
         dst = WORK / f"s{i + 1}.swf"
         if dst.exists():
             dst.unlink()
-        print(f"\n[dbg] --- 替换 {i + 1}/3: {label} ---")
-        print(f"      源: {src}  存在={src.exists()}  "
-              f"大小={src.stat().st_size if src.exists() else '-'}")
+        print(f"\n[dbg] --- replace {i + 1}/3: {label} ---")
+        print(f"      source: {src}  exists={src.exists()}  "
+              f"size={src.stat().st_size if src.exists() else '-'}")
         cmd = [str(FFDEC), "-replace", str(cur), str(dst), cls, str(src)]
         p = subprocess.run(cmd, capture_output=True, text=True)
         print(f"      rc={p.returncode}")
@@ -84,47 +85,47 @@ def main() -> int:
         if err:
             print("      stderr: " + err.replace("\n", "\n              ")[:600])
         if not dst.exists():
-            print(f"      ❌ 没产出 {dst.name}")
+            print(f"      ❌ did not produce {dst.name}")
             return 1
-        print(f"      ✅ {dst.name} = {dst.stat().st_size} 字节"
-              f"（输入 {cur.stat().st_size}）")
+        print(f"      ✅ {dst.name} = {dst.stat().st_size} bytes "
+              f"(input {cur.stat().st_size})")
         cur = dst
 
-    print(f"\n[dbg] 全部完成 -> {cur} ({cur.stat().st_size} 字节)")
+    print(f"\n[dbg] all steps done -> {cur} ({cur.stat().st_size} bytes)")
 
-    # ★ 自动安装（踩过的坑）★
-    #   原来这里**只打印路径、不替换游戏里的 SWF**，
-    #   于是 `set_difficulty.py --install` 的基准还是**旧版**
-    #   -> 新加的补丁永远进不了游戏（实测真机连续两次"缺失"才发现）。
-    #   想只构建不安装：`python build_debug.py --no-install`
+    # ★ Automatic install (a pit I already fell into) ★
+    #   Originally this **only printed the path and did not replace the SWF in the game**,
+    #   so the baseline for `set_difficulty.py --install` was still the **old build**
+    #   -> new patches could never reach the game (only after two "missing" runs on the real machine).
+    #   To build without installing: `python build_debug.py --no-install`
     if not args.no_install:
         dst = GAME_DIR / "FighterTester.swf"
         if dst.exists():
             shutil.copy2(dst, GAME_DIR / "FighterTester.prev.swf")
         shutil.copy2(cur, dst)
-        print(f"[dbg] ✅ 已安装为 {dst.name} ({dst.stat().st_size} 字节)")
-        print("[dbg] ⚠️ 难度会被还原 —— 记得再跑：")
+        print(f"[dbg] ✅ installed as {dst.name} ({dst.stat().st_size} bytes)")
+        print("[dbg] ⚠️ difficulty will be reset — remember to run:")
         print("[dbg]    python set_difficulty.py --level 3 --install")
     else:
-        print("[dbg] （--no-install：未替换游戏里的 SWF）")
+        print("[dbg] (--no-install: the SWF inside the game was not replaced)")
 
-    # 核对三个补丁都在
+    # Verify that all three patches are present
     tmp = WORK / "chk"
     shutil.rmtree(tmp, ignore_errors=True)
     subprocess.run([str(FFDEC), "-export", "script", str(tmp), str(cur)],
                    capture_output=True, text=True)
     for label, pat, fname in (
-            ("桥接+比分+角色id", "bvnExportState", "GameCtrler.as"),
+            ("bridge + score + character id", "bvnExportState", "GameCtrler.as"),
             ("getActionCtrler", "getActionCtrler", "FighterMcCtrler.as"),
-            # 校验标记用 **ASCII** 的 skip()：中文串在 FFDec 导出的文件里
-            # 常因编码不一致而误报 ❌（实测源码里明明有注入）。
-            ("开场跳过", "skip()", "GameStartCtrler.as")):
+            # The check marker uses **ASCII** skip(): Chinese strings in files exported by FFDec
+            # often report a false ❌ because of inconsistent encoding (the injected source is there).
+            ("intro skip", "skip()", "GameStartCtrler.as")):
         f = next(tmp.rglob(fname), None)
         if f:
             t = f.read_text(encoding="utf-8", errors="replace")
             print(f"      {label:<16} {'✅' if pat in t else '❌'}  ({fname})")
         else:
-            print(f"      {label:<16} ❌ 找不到 {fname}")
+            print(f"      {label:<16} ❌ not found: {fname}")
     return 0
 
 
