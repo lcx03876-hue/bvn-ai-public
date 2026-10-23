@@ -38,6 +38,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from bvn_paths import game_exe
 
 ROOT = Path(__file__).resolve().parent
 CFG = ROOT / "start_config.json"
@@ -77,7 +78,7 @@ def save_cfg(cfg: dict) -> None:
 
 
 
-GAME_EXE = Path(r"C:\Users\31673\Downloads\swf_output\swf_output\FighterTester.exe")
+GAME_EXE = game_exe()
 
 
 def _ensure_game(wait_s: float = 100.0) -> bool:

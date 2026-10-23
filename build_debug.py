@@ -13,9 +13,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from bvn_paths import game_dir
 
 ROOT = Path(__file__).resolve().parent
-GAME_DIR = Path(r"C:\Users\31673\Downloads\swf_output\swf_output")
+GAME_DIR = game_dir()
 FFDEC = Path(r"C:\Program Files (x86)\FFDec\ffdec-cli.exe")
 PY = sys.executable
 WORK = ROOT / "runs" / "build_debug"

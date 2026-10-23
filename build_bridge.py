@@ -28,9 +28,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from bvn_paths import game_dir
 
 ROOT = Path(__file__).resolve().parent
-GAME_DIR = Path(r"C:\Users\31673\Downloads\swf_output\swf_output")
+GAME_DIR = game_dir()
 SWF_IN = GAME_DIR / "FighterTester.swf"
 SWF_BAK = GAME_DIR / "FighterTester.swf.orig"
 SWF_OUT = GAME_DIR / "FighterTester.bridge.swf"

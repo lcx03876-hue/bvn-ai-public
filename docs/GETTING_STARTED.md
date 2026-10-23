@@ -38,7 +38,10 @@ setx BVN_GAME_DIR "C:\path\to\your\swf_output"
 export BVN_GAME_DIR="/c/path/to/your/swf_output"
 ```
 
-If the variable is unset, scripts fall back to the `--game-dir` CLI flag.
+If the variable is unset, the scripts that need the game stop immediately with
+the message above instead of guessing — `bvn_paths.py` is the single place that
+resolves it, so no module hard-codes a path. Scripts that accept an explicit file
+(`build_bridge.py --swf-in`, `set_difficulty.py`) can be pointed at it directly.
 
 FFDec's CLI is located automatically; override with `FFDEC` if needed:
 

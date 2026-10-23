@@ -34,9 +34,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from bvn_paths import game_dir
 
 ROOT = Path(__file__).resolve().parent
-GAME_DIR = Path(r"C:\Users\31673\Downloads\swf_output\swf_output")
+GAME_DIR = game_dir()
 SWF_CUR = GAME_DIR / "FighterTester.swf"
 SWF_HELL = GAME_DIR / "FighterTester.hell.swf"      # 地狱版备份
 FFDEC = Path(r"C:\Program Files (x86)\FFDec\ffdec-cli.exe")

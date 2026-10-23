@@ -21,9 +21,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from bvn_paths import game_swf
 
 FFDEC = Path(r"C:\Program Files (x86)\FFDec\ffdec-cli.exe")
-DEFAULT_SWF = Path(r"C:\Users\31673\Downloads\swf_output\swf_output\FighterTester.swf")
+DEFAULT_SWF = game_swf()
 
 CHECKS = [
     ("GameCtrler", "GameCtrler.as",

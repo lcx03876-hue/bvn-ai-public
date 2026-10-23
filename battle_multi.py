@@ -181,7 +181,8 @@ def main() -> int:
         #   实测：游戏在选人界面闲置两小时后会自己退出（今天发生了 3 次），
         #   以前这条链路只会打印"找不到游戏窗口"然后退出 1 —— 一轮 20 分钟的
         #   评估就这样白等。`play.py` 早就有 `_ensure_game`，这里补上同样的能力。
-        exe = Path(r"C:\Users\31673\Downloads\swf_output\swf_output\FighterTester.exe")
+        from bvn_paths import game_exe
+        exe = game_exe()
         if not exe.exists():
             print(f"找不到游戏窗口，且游戏本体不存在: {exe}")
             return 2
