@@ -30,11 +30,14 @@ against the real game running on Windows.
 
 ## Why this project is different
 
-Most game-AI projects on a Flash game read **pixels**: screenshot → CNN →
-reinforcement learning. That works, but the network has to *re-derive* things
-the game already knows — HP, meter, exact coordinates, action state.
+**No vision, no memory scanning.** Most game-AI projects on a Flash game read
+**pixels**: screenshot → CNN → reinforcement learning. That works, but the network
+has to *re-derive* things the game already knows — HP, meter, exact coordinates,
+action state. Reading the process memory instead was tried first and abandoned
+(see below).
 
-This project instead **injects ActionScript into the game's own code**.
+This project **injects ActionScript into the game's own code** — a bridge, not a
+camera and not a debugger.
 
 The decompiled SWF is patched so that `GameCtrler.render()` — which runs every
 frame — writes a JSON snapshot of both fighters to disk:
