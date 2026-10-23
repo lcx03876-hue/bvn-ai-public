@@ -44,7 +44,7 @@ import time
 from pathlib import Path
 
 from backends import add_backend_args, build_backends, resolve_mode
-from config import ACTION_INDEX, ACTION_SPECS, ACTIONS, BVN_WINDOW_KEYWORDS, FRAME_DT, ensure_dirs
+from config import HP_MAX, ACTION_INDEX, ACTION_SPECS, ACTIONS, BVN_WINDOW_KEYWORDS, FRAME_DT, ensure_dirs
 from memory_reader import Frame
 from record import Episode
 from state import OBS_DIM, StateBuilder, compute_reward
@@ -260,7 +260,8 @@ def play_one_match(backends, policy, builder, dagger: Dagger,
                    stopping: dict, max_rounds: int = 5,
                    max_seconds: float = 900.0,
                    freeze_seconds: float = FREEZE_S,
-                   focus_kw: str | None = None) -> Episode | None:
+                   focus_kw: str | None = None,
+                   live=None) -> Episode | None:
     """Play one full best-of-3 and return everything recorded during it.
 
     ``max_rounds`` and ``max_seconds`` are hard safety limits. The match-end
@@ -334,6 +335,19 @@ def play_one_match(backends, policy, builder, dagger: Dagger,
             policy.key_intent = None
             intent_counts[intent] = intent_counts.get(intent, 0) + 1
         name = intent or ACTIONS[send]
+        if live is not None:
+            _me, _op = prev_frame.p1, prev_frame.p2
+            live.push(
+                act=name, idx=int(send), label=ACTIONS[int(label)],
+                me_hp=float(getattr(_me, "hp", 0)), opp_hp=float(getattr(_op, "hp", 0)),
+                me_max=float(HP_MAX), opp_max=float(HP_MAX),
+                qi=float(getattr(_me, "mp", 0.0)),
+                dist=abs(float(getattr(_op, "x", 0)) - float(getattr(_me, "x", 0))),
+                me_state=int(getattr(_me, "state", 0) or 0),
+                opp_state=int(getattr(_op, "state", 0) or 0),
+                in_air=bool(getattr(_me, "in_air", False)),
+                forms=int(getattr(_me, "forms_used", 0) or 0),
+            )
 
         if name.startswith("wankai"):
             # Atomic sequence -- see WANKAI_GAP_S above. It stalls the loop for
@@ -534,6 +548,8 @@ def main(argv: list[str] | None = None) -> int:
                          "from --policy)")
     ap.add_argument("--spacing", action="store_true",
                     help="悬停+后摇惩罚：保持一个冲刺的距离（~150），对手收招时冲刺抓（见 RulePolicy）")
+    ap.add_argument("--live", default=None, metavar="PATH",
+                    help="每帧写实时状态 JSON（给 hud.py 显示），默认关")
     ap.add_argument("--mask", action="store_true",
                     help="给模型的动作加合法性掩码（气不够/空中/地面限制）")
     ap.add_argument("--technique-mix", action="store_true", dest="technique_mix",
@@ -570,6 +586,11 @@ def main(argv: list[str] | None = None) -> int:
                         spacing=bool(getattr(args, "spacing", False)),
                         technique_mix=bool(args.technique_mix))
     dagger = Dagger(args.dagger_onnx, args.dagger_temp, mask=args.mask)
+    live = None
+    if getattr(args, "live", None):
+        from live_hud import LiveWriter
+        live = LiveWriter(args.live)
+        print(f"[match] 实时日志 -> {args.live}")
 
     # Arm the foreground watchdog. Keys go out through SendInput, which targets
     # whatever window is in front -- on the bridge backend that is the game, so
@@ -617,6 +638,7 @@ def main(argv: list[str] | None = None) -> int:
             ep = play_one_match(backends, policy, builder, dagger,
                                 args.hz, tag, args.verbose, stopping,
                                 max_rounds=args.max_rounds,
+                                live=live,
                                 max_seconds=args.max_seconds,
                                 freeze_seconds=args.freeze_seconds,
                                 focus_kw=focus_kw)

@@ -46,6 +46,15 @@ Protocol changed to **complete best-of-3 matches with panel-verified characters*
   (`relabel_offline.py`) are now part of the public tree.
 - `check_dataset.py` now asserts that the observation scale matches the runtime.
 
+### Added (0.2.0, continued)
+
+- **Live HUD for recording** (`hud.py`, `live_hud.py`, `demo.py`): a borderless
+  dark overlay next to the game window showing HP/qi bars, the current action with
+  the model's confidence, a rolling action ticker, and running dealt/taken/net
+  totals. The control loop writes one small JSON per decision (`--live`,
+  atomically replaced), so the overlay never touches the game and cannot steal
+  focus. `demo.py` starts both with one command.
+
 ### Fixed
 
 - **Observation scale mismatch in migrated data**: `forms_used` was written as raw

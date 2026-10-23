@@ -109,6 +109,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                              "默认关：历史 6-0-0 / +1158 是旧口径。")
     parser.add_argument("--spacing", action="store_true",
                         help="规则模式：悬停+后摇惩罚（保持一个冲刺距离，收招时冲刺抓）")
+    parser.add_argument("--live", default=None, metavar="PATH",
+                        help="每帧把'这一帧按了什么 + 当前血量/气/距离'写成 JSON，"
+                             "给 hud.py 做侧边实时显示（录像用）。默认关。")
     parser.add_argument("--mask", action="store_true",
                         help="给模型动作加合法性掩码（气不够/空中/地面限制）。"
                              "实测（2026-10-18）：不加掩码时模型 65%% 的变身是在气<300 时按的，"
@@ -126,6 +129,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # 而这里原来默认跑 qnet，导致真机上模型"一直按 A"乱打。
     # 现在默认 policy.onnx；要用 DQN 得显式 --onnx .../qnet.onnx，
     # 并且最好先看 train.py 打印的 [agree] 那两行确认它没崩。
+    live = None
+    if getattr(args, "live", None):
+        from live_hud import LiveWriter
+        live = LiveWriter(args.live)
+        print(f"[play] 实时日志 -> {args.live}（另开一个窗口跑 hud.py 就能看到）")
     rule_policy = None
     sess = None
     in_name = None
@@ -358,6 +366,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             logits = np.where(_m, logits, -1e9)
                     except Exception:  # noqa: BLE001
                         pass
+                act_conf = None
                 if rule_policy is None:
                     if args.temperature > 0:
                         z = logits / args.temperature
@@ -365,8 +374,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         p = np.exp(z)
                         p /= p.sum()
                         action = int(np.random.choice(len(p), p=p))
+                        act_conf = float(p[action])
                     else:
                         action = int(np.argmax(logits))
+                        act_conf = 1.0
 
                 # ---- 意图通道（--intents）：模型出动作，规则出意图 ----
                 intent = None
@@ -420,6 +431,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                         last_act = None
                     _last_frame = _fnow
                     act_name = intent or ACTIONS[action]
+                    if live is not None:
+                        _me, _op = snap.raw.p1, snap.raw.p2
+                        live.push(
+                            act=act_name, idx=int(action), conf=act_conf,
+                            me_hp=float(getattr(_me, "hp", 0)),
+                            opp_hp=float(getattr(_op, "hp", 0)),
+                            me_max=float(HP_MAX), opp_max=float(HP_MAX),
+                            qi=float(getattr(_me, "mp", 0.0)),
+                            dist=abs(float(getattr(_op, "x", 0)) - float(getattr(_me, "x", 0))),
+                            me_state=int(getattr(_me, "state", 0) or 0),
+                            opp_state=int(getattr(_op, "state", 0) or 0),
+                            in_air=bool(getattr(_me, "in_air", False)),
+                            forms=int(getattr(_me, "forms_used", 0) or 0),
+                            reward=round(float(ep_reward), 1),
+                        )
                     if act_name.startswith("wankai"):
                         # ★ 万解/变身必须走原子序列 ★
                         #   实测：常规逐帧发键**发不出** —— FighterKeyCtrler.wanKai()

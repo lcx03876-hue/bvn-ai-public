@@ -97,11 +97,49 @@ memory-scanner backend, so layers 2–6 never needed to change.
 
 ---
 
+## Watching it play (built-in HUD)
+
+`hud.py` is a borderless dark overlay that sits next to the game window and shows
+what the AI is doing **as it does it** — useful for recording, and useful for
+believing the numbers:
+
+```
+ichigo  vs  naruto
+难度 LV3   第 2 局   比分 1-0
+模型 wankai_v9 + 掩码
+我  ███████████░░░  1432
+敌  ███████░░░░░░░   912
+气  ██████████░░░  241/300  可变身
+距离 187   形态 1/2   对手状态 11
+▶ 上挑 ↑J   63%
+15:31:02  冲刺 →
+15:31:02  远攻 U
+…
+打出 3421   承受 1180   净 +2241   决策 28.4/秒
+```
+
+```bash
+python demo.py                        # model + mask + HUD, one command
+python demo.py --rule                 # the rule policy instead
+python hud.py --right-of --borderless # HUD only (game already running)
+```
+
+The HUD reads two files and never touches the game: `runs/live.json` (written by
+the control loop every decision — `live_hud.py`) and `runs/bvn_state.json` (the
+injected bridge). It has no focus grab, so the controller keeps sending keys
+normally.
+
+---
+
 ## What's in the box
 
 ```
 models/wankai_v9/      ← the reference weights behind the results below (1.6 MB)
                          qnet.onnx + policy.onnx + both PyTorch checkpoints + meta
+
+demo.py              ← one command: model + mask + side HUD (recording)
+hud.py                 the overlay itself (Tk, borderless, --right-of)
+live_hud.py            writer/reader for runs/live.json (per-decision telemetry)
 
 play.py              ← one command: launch game, set up, play a round, report
 go_vscpu.py            panel setup + verified match start (--launch for 0-frame gap)

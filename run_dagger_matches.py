@@ -96,6 +96,8 @@ def main() -> int:
     ap.add_argument("--policy", default="rule")
     ap.add_argument("--spacing", action="store_true",
                     help="规则驱动时打开悬停+后摇惩罚（透传 collect_match）")
+    ap.add_argument("--live", default=None, metavar="PATH",
+                    help="透传 collect_match --live（给 hud.py 显示）")
     ap.add_argument("--mask", action="store_true",
                     help="模型驱动时加动作合法性掩码（气不够的招屏蔽）")
     ap.add_argument("--technique-mix", action="store_true", dest="technique_mix",
@@ -145,6 +147,7 @@ def main() -> int:
             + ("--technique-mix " if args.technique_mix else "")
             + ("--spacing " if args.spacing else "")
             + ("--mask " if args.mask else "")
+            + (f"--live {args.live} " if args.live else "")
 
             + f'--max-rounds {args.max_rounds} '
             f'--max-seconds {args.max_seconds}')
