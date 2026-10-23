@@ -27,6 +27,8 @@ def main() -> int:
     ap.add_argument("--onnx", default="models/wankai_v9/qnet.onnx")
     ap.add_argument("--no-mask", action="store_true", help="关掉动作掩码（不推荐）")
     ap.add_argument("--hud-only", action="store_true", help="只开 HUD")
+    ap.add_argument("--keep-hud", action="store_true", dest="keep_hud",
+                    help="打完不关 HUD（默认打完自动关）")
     ap.add_argument("--lang", choices=("auto", "zh", "en"), default="auto",
                     help="HUD 语言（auto=跟随系统）")
     ap.add_argument("--w", type=int, default=430)
@@ -38,7 +40,8 @@ def main() -> int:
     hud = subprocess.Popen(
         [sys.executable, str(ROOT / "hud.py"), "--right-of", "--borderless",
          "--lang", args.lang, "--label", label,
-         "--live", LIVE, "--w", str(args.w), "--h", str(args.h)],
+         "--live", LIVE, "--w", str(args.w), "--h", str(args.h),
+         "--exit-when-stale", "40"],
         cwd=str(ROOT),
     )
     print(f"[demo] HUD 已启动（pid {hud.pid}）；关掉那个窗口就结束演示")
@@ -61,10 +64,15 @@ def main() -> int:
         rc = subprocess.call(cmd, cwd=str(ROOT))
     finally:
         if hud.poll() is None:
-            print("[demo] 对局结束；HUD 还开着，看完直接关窗口（或 Ctrl+C）")
-            try:
-                hud.wait()
-            except KeyboardInterrupt:
+            if args.keep_hud:
+                print("[demo] 对局结束；HUD 还开着（--keep-hud），看完关窗口即可")
+                try:
+                    hud.wait()
+                except KeyboardInterrupt:
+                    hud.terminate()
+            else:
+                # 默认打完就关：否则关掉游戏后它会一直挂着（实测踩过）
+                print("[demo] 对局结束，关闭 HUD（要保留请加 --keep-hud）")
                 hud.terminate()
     return rc
 

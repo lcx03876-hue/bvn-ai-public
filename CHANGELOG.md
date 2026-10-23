@@ -56,6 +56,9 @@ Protocol changed to **complete best-of-3 matches with panel-verified characters*
   focus. `demo.py` starts both with one command.
 - **Bilingual HUD** (`--lang auto|zh|en`, default follows the system locale): all
   labels and all 21 action names exist in Chinese and English.
+- `hud.py --exit-when-stale N` and `demo.py --keep-hud`: the overlay now closes
+  itself when the data source stops updating (closing the game no longer leaves a
+  borderless window behind with no title to match in `taskkill`).
 
 ### Fixed
 

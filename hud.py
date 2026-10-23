@@ -220,7 +220,29 @@ class Hud:
         self.c.coords(rect, x0, y0, x0 + (x1 - x0) * f, y1)
         self.c.itemconfigure(rect, fill=color)
 
+    def _src_mtime(self) -> float:
+        newest = 0.0
+        for f in (self.args.live, self.args.state):
+            try:
+                import os
+                newest = max(newest, os.path.getmtime(f))
+            except OSError:
+                pass
+        return newest
+
     def tick(self) -> None:
+        # ★ 数据源停更就自己退出 ★
+        #   实测教训：关掉游戏窗口后 HUD 还傻站着，得手动杀进程；
+        #   而 `--borderless` 的窗口没有标题，按标题杀都杀不到（只能按命令行匹配）。
+        #   这里改成"数据源 N 秒没更新就退出"，默认 0=不启用。
+        if self.args.exit_when_stale > 0:
+            import time as _t
+            mt = self._src_mtime()
+            if mt and _t.time() - mt > self.args.exit_when_stale:
+                print(f"[hud] 数据源 {self.args.exit_when_stale}s 没更新，自动退出")
+                self.root.destroy()
+                return
+
         live = read_live(self.args.live) or {}
         try:
             import json
@@ -344,6 +366,8 @@ def main() -> int:
     ap.add_argument("--borderless", action="store_true",
                     help="no title bar (cleaner for recording; close with Alt+F4)")
     ap.add_argument("--alpha", type=float, default=1.0)
+    ap.add_argument("--exit-when-stale", type=float, default=0.0, dest="exit_when_stale",
+                    help="数据源超过 N 秒没更新就自动退出（0=不启用）")
     args = ap.parse_args()
 
     root = tk.Tk()

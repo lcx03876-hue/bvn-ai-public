@@ -211,6 +211,23 @@ character it played against — prefer `run_dagger_matches.py`.
 
 ---
 
+## Recording
+
+`demo.py` starts the model (or `--rule`) together with the side HUD and keeps them
+in one process group:
+
+```bash
+python demo.py --lang en --matches 1     # HUD closes itself when the match ends
+python hud.py --right-of --borderless --lang zh --exit-when-stale 40
+```
+
+`--exit-when-stale` is what you want when recording unattended: the overlay quits
+once `runs/live.json` and `runs/bvn_state.json` stop moving, so closing the game
+does not leave an orphan borderless window (it has no title bar, so `taskkill` by
+window title will not find it — match `CommandLine -like "*hud.py*"` instead).
+
+---
+
 ## 6. Troubleshooting
 
 **The AI stands still at the start of a round.**

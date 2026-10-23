@@ -47,7 +47,8 @@ class LiveWriter:
         self._n += 1
         payload = {"t": now, "wall": time.strftime("%H:%M:%S"), "n": self._n}
         payload.update(fields)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        # 临时文件名带 pid：并发写同一路径时不会互相踩（实测两个写者会报"写失败"）
+        tmp = self.path.with_suffix(f"{self.path.suffix}.{os.getpid()}.tmp")
         try:
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, self.path)
