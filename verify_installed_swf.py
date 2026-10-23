@@ -1,16 +1,16 @@
-"""Verify that every patch is present in the **currently installed SWF**.
+"""核对**当前安装的 SWF** 里所有补丁是否都在。
 
-This check matters: the script that `set_difficulty.py` swaps in is also `FighterTester`,
-in the same class as "the F1 hotkey / _testMode default 22" ——
-if it works from an **old** FighterTester.as baseline, it overwrites those patches.
+这个检查很重要：`set_difficulty.py` 替换的脚本也是 `FighterTester`，
+和"F1 热键 / _testMode 默认 22"在同一个类里 ——
+如果它拿的基准是**旧的** FighterTester.as，就会把那些补丁覆盖掉。
 
-Expected to all be present in the installed SWF:
+期望在已装 SWF 里同时存在：
   GameCtrler      : bvnExportState / p1IsAI / p1Wins / p1Id / aiModel
   FighterMcCtrler : getActionCtrler
-  GameStartCtrler : skip() at the start of renderStart1v1
+  GameStartCtrler : skip() 在 renderStart1v1 开头
   FighterTester   : keyCode == 112 (F1) / _testMode / AI_level = 1
 
-Usage::
+用法::
     python verify_installed_swf.py
     python verify_installed_swf.py --swf <path>
 """
@@ -22,57 +22,46 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Resolved from the FFDEC env var, or the usual install locations.
-from bvn_paths import ffdec as _ffdec_resolve
-FFDEC = _ffdec_resolve()
-# Resolved from BVN_GAME_DIR (or ./game).
-from bvn_paths import game_swf as _game_swf_resolve
-
-def _resolve_game_swf():
-    """Resolve this path on demand, so --help works without the game."""
-    return _game_swf_resolve()
-
-
+FFDEC = Path(r"C:\Program Files (x86)\FFDec\ffdec-cli.exe")
+DEFAULT_SWF = Path(r"C:\Users\31673\Downloads\swf_output\swf_output\FighterTester.swf")
 
 CHECKS = [
     ("GameCtrler", "GameCtrler.as",
-     [("bridge export", "bvnExportState"), ("score", "p1Wins"),
-      ("is AI", "p1IsAI"), ("character id", "p1Id"), ("difficulty", "aiModel")]),
+     [("桥接导出", "bvnExportState"), ("比分", "p1Wins"),
+      ("是否AI", "p1IsAI"), ("角色id", "p1Id"), ("难度", "aiModel")]),
     ("FighterMcCtrler", "FighterMcCtrler.as",
      [("getActionCtrler", "getActionCtrler")]),
     ("GameStartCtrler", "GameStartCtrler.as",
-     [("match-start skip", "skip()")]),
+     [("开场跳过", "skip()")]),
     ("FighterTester", "FighterTester.as",
-     [("F1 hotkey", "112"), ("mode variable", "_testMode"),
-      ("difficulty", "AI_level = ")]),
+     [("F1热键", "112"), ("模式变量", "_testMode"),
+      ("难度", "AI_level = ")]),
 ]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    # default=None: resolving here would run before --help is handled
-    ap.add_argument("--swf", default=None)
+    ap.add_argument("--swf", default=str(DEFAULT_SWF))
     args = ap.parse_args()
-    swf_path = Path(args.swf) if swf_path else _resolve_game_swf()
 
     swf = Path(args.swf)
     if not swf.exists():
-        print(f"❌ cannot find {swf}")
+        print(f"❌ 找不到 {swf}")
         return 2
-    print(f"[chk] SWF: {swf}  ({swf.stat().st_size} bytes)")
+    print(f"[chk] SWF: {swf}  ({swf.stat().st_size} 字节)")
 
     work = Path(__file__).resolve().parent / ".tmp-swfchk"
     shutil.rmtree(work, ignore_errors=True)
     p = subprocess.run([str(FFDEC), "-export", "script", str(work), str(swf)],
                        capture_output=True, text=True)
     if p.returncode != 0:
-        print("FFDec export failed:", (p.stderr or "")[-400:])
+        print("FFDec 导出失败:", (p.stderr or "")[-400:])
 
     ok_all = True
     for label, fname, pats in CHECKS:
         f = next(work.rglob(fname), None)
         if not f:
-            print(f"  ❌ {label:<16} cannot find {fname}")
+            print(f"  ❌ {label:<16} 找不到 {fname}")
             ok_all = False
             continue
         t = f.read_text(encoding="utf-8", errors="replace")
@@ -84,21 +73,21 @@ def main() -> int:
                 ok_all = False
         print(f"  {label:<16} " + "  ".join(marks))
 
-    # Extra: confirm the difficulty
+    # 额外：难度确认
     ft = next(work.rglob("FighterTester.as"), None)
     if ft:
         t = ft.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"AI_level\s*=\s*(\d+)", t)
         if m:
-            print(f"  [difficulty] the script says AI_level = {m.group(1)}"
-                  f" (after entering a match, the aiLevel/aiModel read over the bridge should equal it)")
+            print(f"  [难度] 脚本里写着 AI_level = {m.group(1)}"
+                  f"（进对局后桥接的 aiLevel/aiModel 应等于它）")
     shutil.rmtree(work, ignore_errors=True)
 
     print()
-    print("✅ all patches present" if ok_all else "❌ some patches are missing (see the ❌ above)")
+    print("✅ 所有补丁都在" if ok_all else "❌ 有补丁缺失（见上面 ❌）")
     if not ok_all:
-        print("   most likely one script's .as baseline is wrong —— rebuild everything in one go with build_debug.py,")
-        print("   then change the difficulty value on its own (or the other way round: verify with this script after changing the difficulty).")
+        print("   多半是某个脚本的 .as 基准不对 —— 用 build_debug.py 重新一次到位地构建，")
+        print("   再单独把难度值改掉（或反过来：改完难度后核对本脚本）。")
     return 0 if ok_all else 1
 
 

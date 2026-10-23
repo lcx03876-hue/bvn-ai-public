@@ -1,0 +1,143 @@
+{
+  "obs_dim": 108,
+  "frame_dim": 54,
+  "frame_stack": 2,
+  "n_actions": 21,
+  "actions": [
+    "noop",
+    "left",
+    "right",
+    "jump",
+    "defend",
+    "attack",
+    "skill1",
+    "skill2",
+    "zhao1",
+    "zhao2",
+    "zhao3",
+    "catch1",
+    "bisha",
+    "bishaUP",
+    "bishaSUPER",
+    "airAttack",
+    "airBisha",
+    "airSkill",
+    "ghostStep",
+    "assist",
+    "wankai"
+  ],
+  "feature_names": [
+    "self_x",
+    "self_y",
+    "self_hp",
+    "self_mp",
+    "self_facing",
+    "self_hitstun",
+    "self_alive",
+    "self_forms",
+    "self_can_wankai",
+    "opp_x",
+    "opp_y",
+    "opp_hp",
+    "opp_mp",
+    "opp_facing",
+    "opp_hitstun",
+    "opp_alive",
+    "opp_forms",
+    "opp_can_wankai",
+    "dx",
+    "dy",
+    "hp_diff",
+    "mp_diff",
+    "self_state_0",
+    "self_state_1",
+    "self_state_2",
+    "self_state_3",
+    "self_state_4",
+    "self_state_5",
+    "self_state_6",
+    "self_state_7",
+    "self_state_8",
+    "self_state_9",
+    "self_state_10",
+    "self_state_11",
+    "self_state_12",
+    "self_state_13",
+    "self_state_14",
+    "self_state_15",
+    "opp_state_0",
+    "opp_state_1",
+    "opp_state_2",
+    "opp_state_3",
+    "opp_state_4",
+    "opp_state_5",
+    "opp_state_6",
+    "opp_state_7",
+    "opp_state_8",
+    "opp_state_9",
+    "opp_state_10",
+    "opp_state_11",
+    "opp_state_12",
+    "opp_state_13",
+    "opp_state_14",
+    "opp_state_15"
+  ],
+  "reports": {
+    "policy": {
+      "file": "runs\\wankai_v9\\policy.onnx",
+      "opset": 17,
+      "input": {
+        "name": "obs",
+        "shape": [
+          "batch",
+          108
+        ]
+      },
+      "output": {
+        "name": "out",
+        "shape": [
+          "batch",
+          21
+        ]
+      },
+      "probes": 200,
+      "max_abs_diff": 3.0517578125e-05,
+      "mean_abs_diff": 7.571053970423236e-07,
+      "argmax_agreement": 1.0,
+      "tolerance": 0.0001,
+      "passed": true,
+      "size_kb": 388.0
+    },
+    "q": {
+      "file": "runs\\wankai_v9\\qnet.onnx",
+      "opset": 17,
+      "input": {
+        "name": "obs",
+        "shape": [
+          "batch",
+          108
+        ]
+      },
+      "output": {
+        "name": "out",
+        "shape": [
+          "batch",
+          21
+        ]
+      },
+      "probes": 200,
+      "max_abs_diff": 0.0001068115234375,
+      "mean_abs_diff": 2.301825816175551e-06,
+      "argmax_agreement": 1.0,
+      "tolerance": 0.0001,
+      "passed": false,
+      "size_kb": 388.0
+    }
+  },
+  "onnx_checker": {
+    "available": true,
+    "policy": "ok",
+    "q": "ok"
+  },
+  "all_passed": false
+}

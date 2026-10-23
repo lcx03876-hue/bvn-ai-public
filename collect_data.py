@@ -1,31 +1,25 @@
-"""Stage 3: the data-collection main loop.
+"""阶段 3：数据采集主循环。
 
-60Hz: read state → encode observation → pick action → SendInput injection → read
-the new state on the next frame → record reward.
+60Hz：读状态 → 编码观测 → 选动作 → SendInput 注入 → 下一帧读新状态 → 记奖励。
 
-The critical thing is **frame alignment**: there is no event in memory that says
-"the action took effect", so the only guarantee available is ordering:
+关键一点是**帧对齐**：内存里读不到"动作生效"的事件，所以只能按顺序保证：
 
-    obs_t   = state(t)   ← read before the action is sent
-    action_t             ← sent after t
-    next_obs= state(t+1) ← first frame read after the action went out
-    reward_t= f(state(t), state(t+1))
+    obs_t   = 状态(t)   ← 发动作之前读的
+    action_t             ← 在 t 之后发出
+    next_obs= 状态(t+1) ← 动作发出后读的第一帧
+    reward_t= f(状态(t), 状态(t+1))
 
-So the HP loss from "hitting the opponent" always lands on the transition that
-follows the attack being sent.
-Input latency differs between games; measure it with ``lag_calibrate.py`` and
-compensate with ``--input-lag``.
+于是"打中对手"的那次扣血永远落在发出攻击的下一条 transition 上。
+不同游戏输入延迟不同，用 ``lag_calibrate.py`` 实测后可用 ``--input-lag`` 补偿。
 
-Usage::
+用法::
 
-    python collect_data.py --mock --seconds 60            # offline run, validates the pipeline
-    python collect_data.py --real --seconds 600            # real-machine collection, 10 minutes
+    python collect_data.py --mock --seconds 60            # 离线跑，验证流程
+    python collect_data.py --real --seconds 600            # 真机采集 10 分钟
     python collect_data.py --real --policy rule --seconds 600
 """
 
 from __future__ import annotations
-
-from version import __version__ as _BVN_VERSION
 
 import argparse
 import random
@@ -51,18 +45,18 @@ from record import Episode
 from state import OBS_DIM, StateBuilder, compute_reward
 from action_mask import mask_for
 
-# ---------------------------------------------------------------- policies
+# ---------------------------------------------------------------- 策略
 
 
 class Policy(Protocol):
     name: str
 
-    def act(self, snapshot: Any, frame: Frame) -> int:  # returns the action index
+    def act(self, snapshot: Any, frame: Frame) -> int:  # 返回动作下标
         ...
 
 
 class RandomPolicy:
-    """Uniform random: covers every action; behaviour cloning's initial data rides on it."""
+    """均匀随机：覆盖所有动作，行为克隆的初始数据靠它。"""
 
     name = "random"
 
@@ -77,19 +71,16 @@ class RandomPolicy:
 
 
 class RulePolicy:
-    """Rule policy: **picks moves by the attack distance from the move table** (no
-    longer "get close and mash light attack").
+    """规则策略：**按出招表的攻击距离选招**（不再是"靠近就连点普攻"）。
 
-    This is the core change of step B. The previous problems:
-      * it only ever picked `attack` (hitx only 1~5), so the far attack (U, hitx 30),
-        the special (I, hitx 30) and the super (↓+I, hitx 40) were all unused
-      * it had a move table (`config/moves_full.json`) in hand and never read it
+    这是 B 步的核心改动。之前的问题：
+      * 只会挑 `attack`（hitx 只有 1~5），远攻(U, hitx 30)、
+        必杀(I, hitx 30)、超必杀(↓+I, hitx 40) 全用不上
+      * 手里有出招表（`config/moves_full.json`）却完全没读
 
-    Now it uses `move_select.reach_table()` to compute each move's reach from the
-    move table, then `pick_by_distance()` to pick a move on the principle
-    "in range + qi-cheap + only spend a special when there is qi to spare".
-    The `x` in the mock and `hitx` in the source are the same stage unit, so they
-    can be compared directly.
+    现在用 `move_select.reach_table()` 从出招表算每个招式的射程，
+    再 `pick_by_distance()` 按"够得着 + 省气 + 气有富余才放必杀"选招。
+    Mock 里的 `x` 和源码 `hitx` 是同一套舞台单位，可以直接比。
     """
 
     name = "rule"
@@ -105,34 +96,32 @@ class RulePolicy:
                  eff_range: float = 60.0,
                  dash_cd: int = 6,
                  wankai_max_tries: int = 8,
+                 # ★ 一护可以变身两次（用户指正）—— 默认允许 2 次 ★
+                 wankai_max_forms: int = 2,
                  land_turn_frames: int = 10,
                  pressure: bool = True,
                  pressure_start: int = 12,
                  down_frames: int = 15,
                  antiair: bool = True,
-                 # ★ anti-air window: **decided here** (the float(...) calls below
-                 #   use these two defaults) ★
-                 #   The trap we stepped in: __init__ used to hardcode 8.0/95.0 here, but
-                 #   `float(overhead_dy)`/`float(overhead_dist)` run afterwards and
-                 #   overwrite them back to the parameter defaults -> the patch looked
-                 #   like it took effect while the window stayed 12/70, and the anti-air
-                 #   branch was effectively dead (real machine `overhead=0`).
-                 #   User correction: "use **up-u and up-j** more to hit airborne enemies"
+                 # ★ 对空窗口：**由这里决定**（下面 float(...) 会用这两个默认值）★
+                 #   踩过的坑：__init__ 里曾经硬编码 8.0/95.0，但
+                 #   `float(overhead_dy)`/`float(overhead_dist)` 是后执行的，
+                 #   把它们盖回参数默认值 -> 补丁看似生效、实际窗口一直是 12/70，
+                 #   对空分支形同虚设（真机 `overhead=0`）。
+                 #   用户指正：「多用**上u上j**来打击空中敌人」
                  overhead_dy: float = 8.0,
                  overhead_dist: float = 110.0,
                  u_i_dx: float = 18.0,
                  wi_max_dist: float = 45.0,
                  respect_guard: bool = True,
                  guard_punish_dist: float = 80.0,
-                 # ★ qi-saving threshold: **save qi for the transformation as long as
-                 #   we are not more than 400 behind** ★
-                 #   The user made two demands that have to hold at the same time:
-                 #     1. "losing a round on purpose just to transform is a terrible trade" -> don't save when far behind
-                 #     2. "the super is not worth as much as the transformation, it should be far worse" -> the transformation is worth saving for
-                 #   The old 200 (requiring a "200 lead") was too strict: on the real
-                 #   machine, when one is behind the whole match, it
-                 #   **never saved qi -> the qi went into I/wi -> never reached 300 -> no transformation**.
-                 #   Now -400 = "save unless you are getting badly beaten".
+                 # ★ 攒气门槛：**落后不超过 400 就为变身攒气** ★
+                 #   用户两句话要同时满足：
+                 #     1.「专门为了变而输掉一局很不划算」-> 落后太多不攒
+                 #     2.「超杀没有变身收益大 应该是远不如」-> 变身值得多攒
+                 #   原来 200（要"领先 200"）太严：真机一整场都在落后时
+                 #   **永远不攒气 -> 气被 I/wi 花掉 -> 到不了 300 -> 没变身**。
+                 #   现在 -400 = "除非被打得很惨，否则都攒"。
                  wankai_hp_lead: float = -400.0,
                  inv_start: int = 85,
                  jump_chance: float = 0.04,
@@ -142,198 +131,220 @@ class RulePolicy:
                  u_open_min: float = 65.0,
                  u_open_max: float = 190.0,
                  u_open_dy: float = 90.0,
-                 max_cd: int = 1) -> None:
+                 max_cd: int = 1,
+                 # ★★ 技术动作开关（默认关，历史口径不变）★★
+                 #   用户 2026-10-17 观感：「变身二次以后也几乎不用支援/爆气/幽步，
+                 #   之前还会 j 一套上 j，现在几乎不连招」。
+                 #   实测（wankai11，13.5 万帧）：ghostStep 的触发条件成立 20665 帧
+                 #   （15.3%），其中 **76.7% 被 `defend` 抢走** —— 架防分支在它
+                 #   前面 return；assist 只有 0.44%（原来是 0.55%）。
+                 #   开这个开关 = 把"幽步/支援"提到架防**之前**，让它们真的出现。
+                 spacing: bool = False,
+                 hover_dist: float = 150.0,
+                 technique_mix: bool = False,
+                 tech_ghost_p: float = 0.35,
+                 tech_assist_p: float = 0.015) -> None:
         self.rng = random.Random(seed)
         self.character = character
+        self.technique_mix = bool(technique_mix)
+        self.spacing = bool(spacing)
+        self.hover_dist = float(hover_dist)
+        self._opp_atk_prev = 0
+        self._opp_recover = 0
+        self.tech_ghost_p = float(tech_ghost_p)
+        self.tech_assist_p = float(tech_assist_p)
+        self._tech_dbg = {"ghost": 0, "assist": 0, "blocked": 0}
         self.reach = reach_table(character)
-        # **_attack_range has to use the same unit as the reach table_**
-        # It used to be hardcoded to 140.0, while the longest reach in the table is
-        # only 40 (zhao1=30).
-        # So the cooldown branch's test `abs(gap) > 140 -> go approach` almost never
-        # held, and as long as the distance stayed under 140 it just sat there
-        # `noop`-ing (measured: noop was 45.6%).
-        # What the user observed -- "barely moves, never goes looking for him, the CPU
-        # always comes to him" -- was exactly this bug.
+        # ★★ `skill2`（↑J）的射程：出招表里**没有这一招**，reach_table 给的是默认 10 ★★
+        #   实测（附七补）：始解最远命中 108.6；形态 2 最远接触 142.5，
+        #   而且 75% 的命中发生在空中（是**空中前冲斩**）。
+        #   默认 10 的后果：规则只在贴身/对空分支里用它，从来不敢在中远距离出。
+        #   这里取**保守值**（留余量）：始解 60、形态 2 110。
+        self.reach_skill2_norm = 60.0
+        self.reach_skill2_form2 = 110.0
+        if float(self.reach.get("skill2", 0.0)) < 30.0:
+            self.reach["skill2"] = self.reach_skill2_norm
+        # **_attack_range 必须和距离表同单位_**
+        # 原来写死 140.0，而距离表里最长射程才 40（zhao1=30）。
+        # 于是冷却期的判断 `abs(gap) > 140 -> 去靠近` 几乎永不成立，
+        # 只要距离在 140 以内就一直 `noop` 发呆（实测 noop 占 45.6%）。
+        # 用户观察到的"几乎不动、不去找人、一直是 CPU 来找他"就是这个 bug。
         self.attack_range = (attack_range if attack_range is not None
                              else (max(self.reach.values()) if self.reach else 30.0))
         self.cooldown = 0
         self._air_idx = -1
-        # Debug counters: investigating "why did the new defence never trigger once"
-        # (see test_defense_unit.py)
+        # 调试计数器：查"新防御为什么一次都没触发"（见 test_defense_unit.py）
         self._dbg_def = _DEF_DBG
         for _k in ("act", "early_hp", "cooldown", "energy_ok",
                    "state_ok", "pdef_gt0", "fired"):
             _DEF_DBG.setdefault(_k, 0)
         _DEF_DBG.setdefault("st_counts", {})
-        # Beyond this distance, lean towards closing in on purpose (instead of
-        # standing still throwing sword qi).
-        # Rationale in the comment inside act(): trading projectiles from a standstill
-        # is clearly worse net damage.
-        # ★ keep it at 120 ★
-        # I once changed it to 40, copying the bot source's `_moveKeep = 40`, hoping to
-        # "fight up close"; **measured harmful, reverted**: the 60-second collection
-        # reward collapsed from 169.3 to **+23.1** (a gap of 146, far outside the ±40
-        # noise band). The reason is in the "getting blocked = draining its qi" comment
-        # below.
+        # 超过这个距离就倾向主动贴身（而不是站着放剑气）。
+        # 依据见 act() 里那段注释：站着对射的净伤害明显更差。
+        # ★ 保持 120 ★
+        # 曾按人机源码的 `_moveKeep = 40` 改成 40 想"贴着打"，**实测有害已回退**：
+        # 60 秒采集奖励从 169.3 塌到 **+23.1**（差 146，远超噪声带 ±40）。
+        # 原因见下面"被挡 = 在消耗它的气"那段注释。
         self.approach_dist = 120.0
 
-        # ★ terrain-height parameters (added 2026-10-14) ★
-        #   Rationale: HANDOFF section P: on the GenSe map the ground is y=570 and the
-        #   platform is y=492, a drop of 78; while move hity is only 0~10 ->
-        #   **attacking from below is guaranteed to whiff**.
-        #   The point is not to look at |dx| alone, but also at dy. Coordinate
-        #   convention: **smaller y is higher**.
-        #   * terrain_tol       : |dy| above this = not on the same level, must level out first
-        #   * terrain_jump_reach: the largest height difference one jump can cover
-        #     measured (scan_terrain.py) a single jump lifts about 315 units, so 150 with margin
-        #   * terrain           : master switch (False gives an A/B control)
+        # ★ 地形差参数（2026-10-14 新增）★
+        #   依据 HANDOFF P 节：GenSe 图地面 y=570 / 高台 y=492，落差 78；
+        #   而招式 hity 只有 0~10 -> **在下面出招必然空挥**。
+        #   核心是别只看 |dx|，还要看 dy。坐标约定：**y 越小越高**。
+        #   * terrain_tol       : |dy| 超过它 = 不在同一层，必须先拉平
+        #   * terrain_jump_reach: 一跳能覆盖的最大高度差
+        #     实测（scan_terrain.py）单跳可抬升约 315 单位，取 150 留余量
+        #   * terrain           : 总开关（False 可做 A/B 对照）
         self.terrain = terrain
         self.terrain_tol = float(terrain_tol)
         self.terrain_jump_reach = float(terrain_jump_reach)
 
-        # ★ opener distance control (user correction 2026-10-15) ★
-        #   "think about the opener distance instead of attacking all the time,
-        #    otherwise you get interrupted by their ranged attacks"
+        # ★ 起手距离控制（用户指正 2026-10-15）★
+        #   「考虑好起手距离不要一直攻击，不然容易被别人的远程攻击打断」
         #
-        #   Measured: over distances 25~150, catch1 (the dash-in, which lunges forward)
-        #   and zhao1 (sword qi, which fires from a standstill) each take about 50%
-        #   -> the AI charges straight in and runs right into the opponent's ranged
-        #   move and gets interrupted.
+        #   实测：距离 25~150 里 catch1（突进，会往前冲）和 zhao1（剑气，站住打）
+        #   各占约 50% -> AI 一路往里冲，正好撞进对手远程招里被打断。
         #
-        #   `dash_max_dist`: the dash move is only available within this distance.
-        #   Farther than that, catch1's reach is lowered so pick_by_distance picks
-        #   zhao1 instead
-        #   -- the goal is not "don't attack" but "**attack from where the opponent
-        #   cannot reach you**" (zhao1 has reach 305, it hits from a standstill).
+        #   `dash_max_dist`：突进招只在这个距离内可用。
+        #   更远时把 catch1 的射程压低，让 pick_by_distance 改选 zhao1
+        #   —— 目的不是"不进攻"，而是"**站在对手够不着的地方进攻**"
+        #   （zhao1 射程 305，站住就能打到）。
         self.dash_max_dist = float(dash_max_dist)
-        # At long range "creep in slowly" rather than "charge in": beyond this distance,
-        # prefer sword qi / waiting
+        # 远距离"慢慢压"而不是"冲上去"：超过这个距离时优先剑气/等待
         self.keep_away_dist = float(keep_away_dist)
-        # When the opponent is airborne, jump up to chase if the horizontal distance is
-        # within this range
+        # 对手滞空时，水平距离在这个范围内就跳上去追
         self.chase_dist = float(chase_dist)
         self._chase_dbg = {"chase_jump": 0, "chase_approach": 0}
 
-        # ★★ engagement gate (2026-10-15, user correction "always attacking but rarely
-        # closing in") ★★
+        # ★★ 交战闸门（2026-10-15，用户指正「一直在攻击但是很少贴近」）★★
         #
-        # `vert_tol`: **the height tolerance for whether a move can connect**.
-        #   Hit detection is Flash `Rectangle.intersects()` (`FighterMC.getCheckHitRect`
-        #   takes the display's `getBounds()`), while the `hity` in the data is only
-        #   **0 ~ -10.5** (and it is only used for knockback, not as a hit range).
-        #   Measured (analyze_hit_envelope.py): attacks with |dy|>=25 account for **62%**
-        #   of all attacks and hit only 16% of the time (same level |dy|<10 is 24%).
-        #   -> the old `terrain_tol=25` was too loose: at a 10~25 height difference the
-        #      policy thought it was "same level" when it actually could not connect.
-        #      Tightened to 12, and **the gate was added to every attack branch**.
+        # `vert_tol`：**能不能打到的高度容差**。
+        #   命中判定是 Flash `Rectangle.intersects()`（`FighterMC.getCheckHitRect`
+        #   取 display 的 `getBounds()`），而数据里的 `hity` 只有 **0 ~ -10.5**
+        #   （且只用于击退，不是判定范围）。
+        #   实测（analyze_hit_envelope.py）：|dy|>=25 的发招占 **62%**，
+        #   命中率仅 16%（同层 |dy|<10 是 24%）。
+        #   -> 原来 `terrain_tol=25` 太松：对手在 10~25 高度差时策略以为"同层"，
+        #      其实打不到。收紧到 12，并**把闸门加到所有发招分支**。
         self.vert_tol = float(vert_tol)
         #
-        # `eff_range`: **effective engagement distance**.
-        #   Measured same-level hit rate: dx 15-30 -> 26%, 30-50 -> 24%,
-        #   **80-120 -> 7.7%, 120-200 -> 0%**.
-        #   Beyond this range it should not attack, it should **close in** (dash at long
-        #   range).
+        # `eff_range`：**有效交战距离**。
+        #   实测同层命中率：dx 15-30 -> 26%、30-50 -> 24%、
+        #   **80-120 -> 7.7%、120-200 -> 0%**。
+        #   超出这个范围时不该发招，应该**接近**（远距离用 dash）。
         self.eff_range = float(eff_range)
         self.dash_cd = int(dash_cd)
         self._dash_left = 0
-        # The execution layer reads this attribute: when it is not None, send this key
-        # combination by name instead
-        # (see the runner in match_run.py / collect_data.py)
+        # 执行层读这个属性：非 None 时改成按名发这个按键组合
+        # （见 match_run.py / collect_data.py 的 runner）
         self.key_intent = None
-        # ★ transformation retry counter (it is not "fail once and give up forever") ★
-        #   Measured lesson: the first time it sent J+K the game did not transform, and
-        #   as soon as `_wankai_done` was set to True it never tried again, so the qi was
-        #   immediately burned by bishaSUPER -- no transformation for the whole match.
-        #   Now it tries up to `wankai_max_tries` times;
-        #   after a successful transformation the qi is zeroed (qi>=300 no longer holds),
-        #   so it stops naturally.
+        # ★ 实战连招队列（用户视频「黑崎一护 始解」）★
+        #   元素是 (动作名, 剩余帧数)；非空时 `_act_inner` 每帧推进一格。
+        #   为什么用队列：规则是逐帧独立决策，天然打不出成型连段
+        #   （实测 71% 的 J→U 衔接只是巧合，不是连段）。
+        self._combo: list[tuple[str, int]] = []
+        self._combo_cd = 0
+        self._combo_step = 0      # 已走完的步数（命中确认用）
+        self._combo_miss = 0      # 连续未命中帧数（打空就放弃连招）
+        self._combo_dbg = {"started": 0, "whiff_abort": 0}
+        # 架防保持计数（用户指正「防守只防第一下」：松手=破防）
+        self._guard_frames = 0
+        # ★ 二变后 ↑J 起手的冷却（technique_mix 用）★
+        self._skill2_cd = 0
+        # ★ 破防招感知（technique_mix）★
+        #   哪些"对手状态"代表破防招：naruto 的 必杀/超杀 都落在 12，
+        #   见 moves_full.json 的 isBreakDef（naruto: bisha/bishaSUPER/attackAIR 都是 True）。
+        #   ⚠️ 这是按"标准对手 naruto"标定的状态集合；换角色若其必杀可挡，
+        #   这一条只会让我们多闪一次，不会造成实际损失。
+        self.opp_break_states = frozenset({12, 13})
+        self._ghost_cd = 0
+        # ★ 变身重试计数（不是"一次不成就永远放弃"）★
+        #   实测教训：第一次发 J+K 时游戏没变身成功，而 `_wankai_done` 一置 True
+        #   就再也不尝试了，气随即被 bishaSUPER 花光 —— 整场都没变身。
+        #   现在改成最多试 `wankai_max_tries` 次；
+        #   变身成功后气会清零（qi>=300 不再成立），自然停止。
         self._wankai_done = False
         self._wankai_tries = 0
         self.wankai_max_tries = int(wankai_max_tries)
+        # ★★ 一护可以变身**两次**（用户指正 2026-10-16）★★
+        #   所以"变过一次就永久放弃"是错的：第一次成功后还要留机会给第二次。
+        #   成功次数**从游戏状态边沿计数**（进入 `actionState==50` 算一次，
+        #   因为 50 会持续几百帧，不能按帧累加）。
+        self.wankai_max_forms = int(wankai_max_forms)
+        self._wankai_ok = 0          # 已确认成功的变身次数
+        self._wankai_prev_state = 0  # 上一帧的 actionState（边沿检测用）
 
-        # ★★ the benefit/cost trade-off of transforming (user correction 2026-10-15) ★★
-        #   "the transformation boosts a lot but **losing a round on purpose just to
-        #    transform is a terrible trade**, unless you are sure you can transform and
-        #    **win two rounds in a row**"
-        #   "only consider it at a **very large advantage**, when saving qi does not hurt
-        #    your output"
+        # ★★ 变身的收益/代价权衡（用户指正 2026-10-15）★★
+        #   「变身提升很大但**专门为了变而输掉一局很不划算**，
+        #     除非你有把握能变身**连赢两局**」
+        #   「仅限于**非常大优势**、攒气不会影响输出时才考虑」
         #
-        #   The accounting goes like this: 300 qi could buy 3 specials (≈900 damage).
-        #   Giving up that 900 damage to transform -> very likely **loses this round**,
-        #   and in a best-of-three, losing one round means you have to win two in a row
-        #   to make it back.
-        #   => **by default spend the qi on output**; only when the HP lead is a
-        #      "very large advantage" (`wankai_hp_lead`, default 800/2000) is it worth
-        #      saving qi to transform -- at that point you can stop attacking and still
-        #      not lose the round.
+        #   账要这么算：300 气本来能换 3 次必杀（≈900 伤害）。
+        #   为了变身把这 900 伤害让掉 -> 很可能**输掉这一局**，
+        #   而三局两胜里输一局要连赢两局才补得回来。
+        #   => **默认把气用来打输出**；只有血量领先到"非常大优势"
+        #      （`wankai_hp_lead`，默认 800/2000）才值得攒气变身 ——
+        #      那时不输出也不会输这一局。
         self.wankai_hp_lead = float(wankai_hp_lead)
 
-        # ★★ wake-up pressure: count the **whole invincible period** (22+23+24) ★★
-        #   Measured (measure_invincible.py):
-        #     states 22/23/24 all have a 0.00% HP-loss rate -> **all invincible**
-        #     invincible period length: median 99 frames (3.3s), range 96~226
-        #     from the first appearance of st=23 to the end of invincibility is another median 40 frames
-        #   I used to count only st=23 and assume 15 frames -> 28 frames early -> never
-        #   landed on the wake-up.
-        #   `inv_start` (default 85): only start attacking on frame 85 of the invincible
-        #   period -- the 90th percentile is 114 frames, so **pressing continuously**
-        #   from 85 covers the vast majority of wake-up timings.
+        # ★★ 起身压制：数**完整无敌期**（22+23+24）★★
+        #   实测（measure_invincible.py）：
+        #     22/23/24 三个状态掉血率都是 0.00% -> **全是无敌**
+        #     无敌期时长 中位 99 帧（3.3s），范围 96~226
+        #     从 st=23 首次出现到无敌结束还有 中位 40 帧
+        #   我原来只数 st=23 且假设 15 帧 -> 早了 28 帧 -> 永远压不到起身。
+        #   `inv_start`（默认 85）：无敌期到第 85 帧才开始发招 ——
+        #   90% 分位是 114 帧，从 85 起**持续压**能覆盖绝大多数起身时刻。
         self.inv_start = int(inv_start)
         self._opp_inv_frames = 0
         self._inv_dbg = {"inv_seen": 0, "attacked": 0,
                          "avg_len": 0, "lengths": []}
 
-        # ★ fewer jumps (user correction: jumps too much and gets hit in the air) ★
+        # ★ 跳跃减少（用户指正：跳太多且空中被打）★
         self.jump_chance = float(jump_chance)
 
-        # ★ be active at match start (user correction: dislikes idling at the start) ★
+        # ★ 开局积极（用户指正：不喜欢开局发呆）★
         self.opening_frames = int(opening_frames)
         self._frame_i = 0
         self._opening_dbg = {"frames": 0, "approached": 0}
 
-        # ★ "productive waiting" during wake-up pressure (see patch_pressure_position) ★
-        #   While waiting out the invincible period, do not idle in place: settle at
-        #   `ideal_dist` and then **hold guard**.
-        #   That also removes the single largest chunk of "idling", and covers the
-        #   "doesn't know how to guard" the user called out.
+        # ★ 起身压制期间的"有效等待"（见 patch_pressure_position 的说明）★
+        #   等无敌期时不要原地发呆：卡到 `ideal_dist` 然后**架防御**。
+        #   这同时消掉最大的一块"待机"，并补上用户点名的"不会防御"。
         self.ideal_dist = float(ideal_dist)
+        if spacing:
+            # 悬停模式：把'理想距离'从贴脸 42 改成 hover_dist（实测用户悬停 ~150~190）
+            self.ideal_dist = self.hover_dist
         self._position_dbg = {"too_far": 0, "too_close": 0, "guard": 0}
 
-        # ★ user correction, round four ★
-        #   "up-u is rare, up-j happened once" -> the anti-air window is too strict, loosen it
-        #   "still ate a few of the enemy's air attacks" -> hold guard when the opponent attacks in the air
-        #   "j one string then chain into the u series like that" -> follow up U-series after hitstun
-        self.overhead_dy = 8.0        # 12 -> 8 (decide "he is above" earlier)
-        self.overhead_dist = 95.0     # 70 -> 95 (widen the horizontal window)
+        # ★ 用户第四轮指正 ★
+        #   「上u很少上j就一次」-> 对空窗口太严，放宽
+        #   「还是吃了几次敌人的空中攻击」-> 对手空中出招时架防御
+        #   「j 一套然后接 u 系列这样连招」-> 受击硬直接 U 系
+        self.overhead_dy = 8.0        # 12 -> 8（更早判定"在上方"）
+        self.overhead_dist = 95.0     # 70 -> 95（水平窗口放宽）
         self.air_threat_dist = float(air_threat_dist)
         self._round4_dbg = {"antiair_any": 0, "air_guard": 0, "combo_u": 0}
 
-        # ★ ↑I(bishaUP)'s hit region is **vertically straight overhead** (user correction) ★
-        #   The user's exact words: "**up-i missed every time** -- this range is
-        #   **perpendicular, straight overhead**"
-        #   So a circular criterion like "distance <= 35" will not do -- it must be
-        #   **almost horizontally aligned** (`abs(gap) <= u_i_dx`) **and** the opponent
-        #   above you.
+        # ★ ↑I(bishaUP) 的判定是**垂直在头顶**（用户指正）★
+        #   用户原话：「**上i一次没中** 这个范围是**垂直于头顶**的啊」
+        #   所以不能用"距离 <= 35"这种圆形判据 —— 必须
+        #   **水平几乎对齐**（`abs(gap) <= u_i_dx`）**且**对手在上方。
         self.u_i_dx = float(u_i_dx)
 
-        # ★★ confirm where the opponent is before firing the big move (user correction) ★★
-        #   The user's exact words: "and **before you fire the super, look at where the
-        #   guy is**"
-        #   Measured bug: `bishaSUPER` used to check only `vert_ok` (height),
-        #   **no horizontal distance, no facing** -> it fired facing away and from half
-        #   a screen away, and it **costs 300 qi**, so one whiff throws away a whole
-        #   super for nothing.
+        # ★★ 放大招前必须确认对手位置（用户指正）★★
+        #   用户原话：「还有你**放超杀之前要看看人在哪**」
+        #   实测 bug：`bishaSUPER` 原来只检查 `vert_ok`（高度），
+        #   **没有水平距离、没有朝向** -> 背对着、隔半个屏幕也放，
+        #   而它**花 300 气**，空挥一次等于白送一个大招。
         self.wi_max_dist = float(wi_max_dist)
-        # ★ respect the opponent's guard (user correction + hard data) ★
-        #   "using U as an opener easily gets **blocked** and then you get **punished on
-        #    recovery**"
-        #   Measured: Ichigo form 0 **has no ground guard-break move** (attack/bisha/
-        #   catch1/zhao1 all have isBreakDef False, only attackAIR breaks guard).
-        #   So opening against a guarding opponent = 5 damage dealt and 140 taken on the
-        #   recovery punish.
+        # ★ 尊重对手的防御（用户指正 + 数据实证）★
+        #   「U 拿来起手很容易被**放住**还被**抓后摇**」
+        #   实测：一护 form 0 **没有地面破防招**（attack/bisha/catch1/zhao1
+        #   的 isBreakDef 全是 False，只有 attackAIR 破防）。
+        #   所以对着架防的对手起手 = 只掉 5 血 + 被抓后摇吃 140。
         self.respect_guard = bool(respect_guard)
-        # When the opponent is guarding, being this close means we should not open
-        # (we would get blocked + punished on recovery)
+        # 对手架防时、我离这么近就不该起手（会被放住 + 抓后摇）
         self.guard_punish_dist = float(guard_punish_dist)
         self._guard_dbg = {"held": 0, "attacked_guard": 0}
         self._super_dbg = {"fired": 0, "blocked_dist": 0,
@@ -341,71 +352,61 @@ class RulePolicy:
                            "wi_blocked_dist": 0}
         self._ui_dbg = {"tried": 0, "overhead_ok": 0, "rejected_dx": 0}
 
-        # ★★ user correction, round five: U openers want to be "a bit farther", jumps
-        #    should follow the opponent ★★
-        #   "since u trades with the enemy's u, opening from a bit farther is still good,
-        #    including up-u and down-u"
-        #   "using u as an opener easily gets blocked and then punished on recovery" -> at
-        #   close range you **cannot** open with U
-        #   "I don't jump much because the lv3 bot doesn't jump much" -> jumps follow the opponent
-        self.u_open_min = float(u_open_min)      # closer than this -> do not open with U
-        self.u_open_max = float(u_open_max)      # farther than this -> leave it to the long-range logic
-        # Height difference allowed for a U opener: **up-u/down-u exist precisely to
-        # handle height differences**
-        #   (user: "opening from a bit farther is still good **including up-u and down-u**")
-        #   The trap we stepped in: this used to use `vert_ok` (±12), so when the opponent
-        #   was above/below the platform the whole branch was skipped -> up-u/down-u never
-        #   came out.
+        # ★★ 用户第五轮指正：U 起手要"稍远"，跳跃要跟随对手 ★★
+        #   「因为 u 能和敌人的 u 抵消，所以稍微远一点起手还是不错包括上u下u」
+        #   「u 拿来起手很容易被放住还被抓后摇」-> 近身**不能**用 U 起手
+        #   「我不怎么跳是因为 lv3 的人机不怎么跳」-> 跳跃跟随对手
+        self.u_open_min = float(u_open_min)      # 近于此 -> 不用 U 起手
+        self.u_open_max = float(u_open_max)      # 远于此 -> 交给远距离逻辑
+        # U 起手允许的高度差：**上u/下u 就是用来处理高度差的**
+        #   （用户：「稍微远一点起手还是不错**包括上u下u**」）
+        #   踩过的坑：这里原本用 `vert_ok`（±12），
+        #   于是对手在平台上方/下方时整个分支被跳过 -> 上u/下u 永远不出。
         self.u_open_dy = float(u_open_dy)
         self._u_zone_dbg = {"u_opener": 0, "close_j": 0}
         self._jump_base = float(jump_chance)
-        self._opp_air_ema = 0.0                  # moving average of the opponent's airtime ratio
+        self._opp_air_ema = 0.0                  # 对手滞空比例的滑动平均
         self._jump_adapt_dbg = {"air_rate": 0.0, "chance": 0.0}
 
-        # ★★ reaction speed (user correction: "your reactions are a bit slow") ★★
-        #   Measured mean cooldown = 2.41 frames = 80ms, only 24% of decisions react
-        #   immediately, and the worst case (opponent below) is cd=6 = 200ms.
-        #   `cooldown` was originally added **for data collection** (to give the
-        #   demonstration noop samples), but in real play it is just "deliberately be
-        #   sluggish for N frames".
-        #   Changed to: before `act()` returns, clamp cooldown to `max_cd` (default 1),
-        #   so the policy **re-reads the opponent almost every frame**;
-        #   the hold duration of a move is left to the execution layer's `release_at`
-        #   (holdn frames), so **faster decisions do not interrupt a move in progress**
-        #   (decision and execution are decoupled).
+        # ★★ 反应速度（用户指正：「你的反应有点慢」）★★
+        #   实测平均 cooldown = 2.41 帧 = 80ms，只有 24% 的决定立刻反应，
+        #   最坏的场景（对手在下方）cd=6 = 200ms。
+        #   `cooldown` 原本是**为了采集数据**加的（让示范有 noop 样本），
+        #   但实战里它就是"故意迟钝 N 帧"。
+        #   这里改成：`act()` 返回前把 cooldown 统一夹到 `max_cd`（默认 1），
+        #   于是策略**几乎每帧都重新看对手**；
+        #   而出招的保持时长交给执行层的 `release_at`（holdn 帧），
+        #   **决策变快不会打断正在出的招**（决策与执行解耦）。
         self.max_cd = int(max_cd)
         self._react_dbg = {"clamped": 0, "sum_cd_before": 0, "n": 0}
         self._wankai_value_dbg = {"lead_ok": 0, "lead_no": 0}
 
-        # ★★ landing detection + landing turn (user correction 2026-10-15) ★★
-        #   "after you jump you can't tell where the enemy is, so you keep jumping or
-        #    attacking in one direction; you can't turn in the air, but I suggest adding
-        #    landing detection and then turning"
+        # ★★ 落地检测 + 落地转向（用户指正 2026-10-15）★★
+        #   「起跳以后检测不到敌人在哪，会一直朝着一个方向跳或者攻击，
+        #     虽然空中不能转向，但是建议加一个落地检测然后再转向」
         #
-        #   Not being able to turn in the air is real (game mechanic), so **the
-        #   correction has to happen at the instant of landing**:
-        #     * `_was_in_air` : whether we were airborne last frame -> used to detect "just landed"
-        #     * `_land_frames`: the correction window after landing, during which turning towards the opponent has priority
+        #   空中不能转向是真的（游戏机制），所以**必须在落地瞬间纠正**：
+        #     * `_was_in_air` : 上一帧是否在空中 -> 用它检测"刚落地"
+        #     * `_land_frames`: 落地后的纠正窗口，这段时间优先转向对手
         self._was_in_air = False
         self._land_frames = 0
         self.land_turn_frames = int(land_turn_frames)
         self._land_dbg = {"landed": 0, "turned": 0, "jump_blocked_facing": 0,
                           "air_attack_blocked_facing": 0}
 
-        # ★★ timed wake-up pressure (user correction 2026-10-15) ★★
-        #   "for continuous pressure, watch for the opponent's wake-up timing"
+        # ★★ 起身择时压制（用户指正 2026-10-15）★★
+        #   「连续压制 要看准对手起身时机」
         #
-        #   Source timeline (`FighterMC.playHurtDown2` / `renderHurtFly case 3`):
-        #     down -> `_hurtDownFrame = 15` -> 15 frames later plays "hurt-fly_getup" (wake-up)
-        #   So:
-        #     * opponent down for frames 1..pressure_start-1: **close to attack distance** (don't waste it)
-        #     * at frame pressure_start(12): **fire the move** (2~3 frames of startup)
-        #       -> the attack connects exactly at the moment of the wake-up
+        #   源码时间轴（`FighterMC.playHurtDown2` / `renderHurtFly case 3`）：
+        #     倒地 -> `_hurtDownFrame = 15` -> 15 帧后播 "击飞_起"（起身）
+        #   所以：
+        #     * 对手倒地 1..pressure_start-1 帧：**贴到攻击距离**（别浪费）
+        #     * 到 pressure_start(12) 帧：**发招**（前摇 2~3 帧）
+        #       -> 攻击正好在起身那一刻命中
         #
-        #   ★ This is different from the "brainless chase that failed before" ★
-        #     Before it was "chase as soon as you see a hit", which whiffs during the
-        #     down/invincible period; this one times it against the **known 15-frame
-        #     timeline**.
+        #   ★ 这与"以前失败的无脑追击"不同 ★
+        #     以前是"看到受击就追"，会在倒地/起身无敌期空挥；
+        #     这次是按**确定的 15 帧时间轴**择时。
         self.pressure = bool(pressure)
         self.pressure_start = int(pressure_start)
         self.down_frames = int(down_frames)
@@ -413,15 +414,13 @@ class RulePolicy:
         self._pressure_dbg = {"down_seen": 0, "timed_attack": 0,
                               "closed_in": 0, "waited": 0, "got_up": 0}
 
-        # ★★ anti-air (↑-series moves) ★ user correction 2026-10-15 ★★
-        #   "against an enemy jumping straight overhead you can try wu more, and wj if
-        #    the distance is close"
-        #   The `↑` series **strikes upward**:
-        #     zhao3 = ↑+U (wu)  skill2 = ↑+J (wj)  bishaUP = ↑+I (wi)
-        #   When the opponent jumps over your head, using these is faster and more
-        #   reliable than "jump up and chase".
-        #   `overhead_dy`  : the opponent is this much higher than me (smaller screen y) counts as "overhead"
-        #   `overhead_dist`: the horizontal distance must be within this for the ↑ moves to be worth using
+        # ★★ 对空（↑系招式）★ 用户指正 2026-10-15 ★★
+        #   「打位于正头顶跳跃的敌人的可以多试试 wu，距离近的话可以试试 wj」
+        #   `↑` 系是**往上打**的：
+        #     zhao3 = ↑+U（wu）  skill2 = ↑+J（wj）  bishaUP = ↑+I（wi）
+        #   对手从头顶跳过时，用它们比"跳上去追"更快、更稳。
+        #   `overhead_dy`  : 对手比我高这么多（屏幕 y 更小）就算"在头顶"
+        #   `overhead_dist`: 水平距离在这个范围内才值得用 ↑招
         self.antiair = bool(antiair)
         self.overhead_dy = float(overhead_dy)
         self.overhead_dist = float(overhead_dist)
@@ -430,27 +429,24 @@ class RulePolicy:
         self._wankai_dbg = {"fired": 0, "skipped_air": 0, "skipped_state": 0}
         self._engage_dbg = {"blocked_vert": 0, "blocked_range": 0,
                             "dash_approach": 0, "walk_approach": 0}
-        # Tally: how many times behaviour changed because of a terrain height difference
-        # (after collection you can tell whether this path ever triggered)
+        # 统计：因地形差而改变行为的次数（采集后能看出这条有没有被触发）
         self._terrain_dbg: dict[str, int] = {
             "level_gap": 0, "walk_to_level": 0, "jump_up": 0, "wait_below": 0,
         }
 
     def act(self, snapshot: Any, frame: Frame) -> int:
-        """★ wrapper layer: guarantees **reaction speed** (user correction "your
-        reactions are a bit slow") ★
+        """★ 包装层：保证**反应速度**（用户指正「你的反应有点慢」）★
 
-        Measured (`measure_latency.py`): the policy sets cooldown 2.41 frames on
-        average (80ms), only 24% of decisions react immediately, and the worst case
-        (opponent below) takes 6 frames (200ms).
-        `cooldown` was originally **for data collection** (to manufacture noop samples),
-        but in real play it amounts to "deliberately sluggish".
+        实测（`measure_latency.py`）：策略平均设 cooldown 2.41 帧（80ms），
+        只有 24% 的决定是立刻反应，最坏（对手在下方）要到 6 帧（200ms）。
+        `cooldown` 本来是**给采集数据用的**（造 noop 样本），
+        实战里等于"故意迟钝"。
 
-        Rather than touching those dozens of `self.cooldown = N` sites, this **clamps
-        uniformly before returning** (so every return path is covered):
-        decisions therefore update almost every frame, while **key holds** are the
-        execution layer's `release_at` (holdn frames) -- the two concerns are decoupled,
-        so faster decisions do not interrupt a move in progress.
+        这里不改那几十处 `self.cooldown = N`，而是**在返回前统一夹住**
+        （这样所有 return 路径都被覆盖）：
+        决策因此几乎每帧更新，而**按键保持**由执行层的
+        `release_at`（holdn 帧）负责 —— 两件事解耦，
+        决策变快不会打断正在出的招。
         """
         self._react_dbg["n"] += 1
         self._react_dbg["sum_cd_before"] += self.cooldown
@@ -460,8 +456,31 @@ class RulePolicy:
             self.cooldown = self.max_cd
         return idx
 
+    @property
+    def _wants_wankai(self) -> bool:
+        """还能不能再变身。
+
+        一护可以变身**两次**（用户指正），所以判据是"还没放弃 + 成功次数 < 上限"，
+        而不是"没变身过"。`_wankai_done` 只在**试够 wankai_max_tries 次还没成**
+        时才置 True（即"放弃了"）。
+        """
+        return (not self._wankai_done) and self._wankai_ok < self.wankai_max_forms
+
     def _act_inner(self, snapshot: Any, frame: Frame) -> int:
         me, opp = frame.p1, frame.p2
+        # ★ 统计**已经成功变身几次**（用户指正：一护可以变身两次）★
+        #   边沿计数：`actionState == 50` 是"变身成功"状态（源码 doWanKaiAction），
+        #   真机实测它会持续 283 帧，所以不能按帧累加 —— 只在
+        #   "上一帧不是 50、这一帧是 50"时 +1。
+        #   为什么必须知道成功次数：`_wankai_done` 原来要"试够 wankai_max_tries 次"
+        #   才置 True，于是整场都在为变身攒气，标签里 `bisha`/`bishaSUPER`
+        #   **恒为 0 样本**（实测 10 场真机数据 bisha=0、bishaSUPER=0）；
+        #   而"成功一次就永久放弃"又是错的（第二次变身就没了）。
+        #   放在所有提前 return 之前，且只依赖 `me`。
+        _st = int(getattr(me, "state", 0) or 0)
+        if _st == 50 and self._wankai_prev_state != 50:
+            self._wankai_ok += 1
+        self._wankai_prev_state = _st
         _d = getattr(self, "_dbg_def", None)
         if _d is not None:
             _d["act"] += 1
@@ -469,29 +488,24 @@ class RulePolicy:
             if _d is not None:
                 _d["early_hp"] += 1
             return ACTION_INDEX["noop"]
-        # ★★ engagement gate: must be computed **before** the cooldown branch ★★
-        #   Measured lesson (diag_whiff_source.py): the cooldown branch **attacks
-        #   directly** (`return ACTION_INDEX["attack"]`), and it used to sit before the
-        #   gate, so "the very next frame after setting a cooldown it attacks blindly" --
-        #   regardless of whether the height is right.
-        #   Measured evidence: after adding the gate, attacks with |dy|>=25 were still
-        #   62%, of which st=10 averaged |dy|=86 and st=11 averaged |dy|=74 (= the 78
-        #   platform drop).
+        # ★★ 交战闸门：必须在 cooldown 分支**之前**算好 ★★
+        #   实测教训（diag_whiff_source.py）：cooldown 分支会**直接出招**
+        #   （`return ACTION_INDEX["attack"]`），而它原来在闸门之前，
+        #   于是"刚设完冷却的下一帧起就盲目出招" —— 不管高度对不对。
+        #   实测证据：加闸门后 |dy|>=25 的发招仍占 62%，
+        #   其中 st=10 平均 |dy|=86、st=11 平均 |dy|=74（=平台落差 78）。
         #
-        #   User correction: "the urge to attack is very strong ... always attacking but
-        #   rarely closing in"
-        #                   "distance alone can't tell you whether an attack can connect,
-        #                    because you may not be on the same x axis"
+        #   用户指正：「攻击的欲望很强烈……一直在攻击但是很少贴近」
+        #             「单纯的距离无法判断攻击能不能打到，因为可能不在同一 x 轴」
         dy_now = float(getattr(opp, "y", 0.0)) - float(getattr(me, "y", 0.0))
         vert_ok = abs(dy_now) <= self.vert_tol
         self.key_intent = None
 
 
         qi = getattr(me, "mp", 0.0)
-        # ★ airtime criterion: use the bridge's in_air ★
-        #   It used to be `y < -20` -- but the bridge's y is a screen coordinate
-        #   (ground ≈570, smaller is higher), so it is **never negative** and the test
-        #   was always False.
+        # ★ 滞空判据：用桥接的 in_air ★
+        #   原来写的是 `y < -20` —— 但桥接 y 是屏幕坐标
+        #   （地面 ≈570、越小越高），**永远不为负**，所以恒判 False。
         in_air = bool(getattr(me, "in_air", False))
         opp_state = int(getattr(opp, "state", 0))
         opp_attacking = opp_state in ATTACKING_STATES
@@ -499,41 +513,36 @@ class RulePolicy:
         dist = abs(gap)
         facing_ok = (gap >= 0 and me.facing >= 0) or (gap <= 0 and me.facing <= 0)
 
-        # ★★ tech recovery: press L to get up fast when you are down (source
-        #    renderHurtFlying -> dashJump) ★★
-        #   Why it is worth doing: those 15 frames on the ground are **time spent being
-        #   hit for free**, and getting up early means eating one less round. Also
-        #   `dashJump()` uses "just pressed" (edge triggered), so a single tap of L is
-        #   enough, no need to hold it.
+        # ★★ 受身：自己倒地时按 L 快速起身（源码 renderHurtFlying -> dashJump）★★
+        #   为什么值得做：倒地那 15 帧是**完全挨打的时间**，能提前起来
+        #   就少挨一轮。而且 `dashJump()` 用的是"刚按下"（边沿触发），
+        #   所以点一下 L 就行，不需要长按。
         if int(getattr(me, "state", 0)) in (23, 24):
             self.key_intent = "recover"
             self._pressure_dbg["self_recover"] = (
                 self._pressure_dbg.get("self_recover", 0) + 1)
-            return ACTION_INDEX["noop"]      # the index is only a carrier
+            return ACTION_INDEX["noop"]      # index 只是载体
 
-        # ★ landing detection: in_air going True->False means "just landed" ★
-        #   You cannot turn in the air, so the facing has to be corrected at this instant.
-        #   (User correction: "after you jump you can't tell where the enemy is, so you
-        #    keep jumping or attacking in one direction ... you can't turn in the air, but
-        #    I suggest adding landing detection and then turning")
+        # ★ 落地检测：in_air 由 True->False 就是"刚落地" ★
+        #   空中不能转向，所以落地这一瞬间必须纠正朝向。
+        #   （用户指正：「起跳以后检测不到敌人在哪，会一直朝着一个方向跳
+        #     或者攻击……虽然空中不能转向，但是建议加一个落地检测然后再转向」）
         if self._was_in_air and not in_air:
             self._land_frames = self.land_turn_frames
             self._land_dbg["landed"] += 1
         self._was_in_air = in_air
 
-        # ★ moving average of the opponent's airtime ratio (placed at the **start** of
-        #   act() so it updates every frame) ★
-        #   The trap we stepped in: it used to live in the jump branch, but most frames
-        #   returned earlier than that, so over 400 frames it updated only a few times
-        #   -> air_rate stuck at 0.005 and the jump rate never followed the opponent.
-        #   User correction: "I don't jump much because the lv3 bot doesn't jump much".
+        # ★ 对手滞空比例的滑动平均（放在 act() **开头**，保证每帧都更新）★
+        #   踩过的坑：原来写在跳跃分支里，而大多数帧在更早处就 return 了，
+        #   400 帧只更新了几次 -> air_rate 停在 0.005，跳跃频率没跟着对手变。
+        #   用户指正：「我不怎么跳是因为 lv3 的人机不怎么跳」。
         self._opp_air_ema = 0.97 * self._opp_air_ema + 0.03 * (
             1.0 if bool(getattr(opp, "in_air", False)) else 0.0)
         self._jump_adapt_dbg["air_rate"] = round(self._opp_air_ema, 3)
         self._jump_adapt_dbg["chance"] = round(
             self._jump_base * max(0.15, min(1.0, self._opp_air_ema / 0.20)), 4)
 
-        # Just landed and facing away from the opponent -> **turning around is the top priority**
+        # 刚落地且背对对手 -> **第一优先转身**
         if self._land_frames > 0:
             self._land_frames -= 1
             if not facing_ok:
@@ -542,15 +551,171 @@ class RulePolicy:
                 return (ACTION_INDEX["right"] if gap > 0
                         else ACTION_INDEX["left"])
 
-        # ★★ timed wake-up pressure (user correction) ★★
-        #   First maintain the "how many frames the opponent has been down" counter (using
-        #   the bridge's actionState, 23=HURT_DOWN / 24=HURT_DOWN_TAN).
+        # ★★ 朝向：背对对手时先转身（用户指正 2026-10-17：「转向不灵敏」）★★
+        #   实测（`runs/dbg_dagger/combo_probe3.csv`，当前规则）：
+        #     背对帧占 **30%**，连续背对中位 45 帧（0.75 秒），最长 656 帧；
+        #     而且背对时它在按 `catch1` 20% / `zhao1` 16% —— **朝着反方向出招**。
+        #   原因：`facing_ok` 的转身分支都埋在具体情境里（落地、冲刺、起跳前…），
+        #         而战斗分支在它们之前就 return 了。
+        #   => 这里给一个**无条件的早期转身**：只要背对就先把身转过来，
+        #      再谈进攻（连招队列在跑时不打断，见下面的 `not self._combo`）。
+        if (not facing_ok and abs(gap) > 25.0
+                and not self._combo
+                and int(getattr(me, "hitstun", 0)) == 0):
+            self.cooldown = 1
+            return (ACTION_INDEX["right"] if gap > 0
+                    else ACTION_INDEX["left"])
+
+        # ★★ 输出窗口：上U 对空 / 下U 打倒地 / U 系追击（用户指正 2026-10-17）★★
+        #   用户原话：「不追击，好几次 j 一套以后不按 u 追击，上u下u都没有」
+        #   实测根因：这两类分支原来在 1000 行之后（combo_u / antiair / u_opener），
+        #   而 `_act_inner` 里**分支顺序就是优先级** —— 那时"接近/起跳/防御/压制"
+        #   早就抢先 return 了。把新分支放到 1033 行试过：10 场 13.5 万帧只多出
+        #   109 个 zhao2（+0.08 个点）＝等于没生效。
+        #   => 必须放在「起身择时压制」**之前**（那个分支正好接管了倒地窗口）。
+        #   注意：这里**不查 cooldown** —— 与下面 604 行的防御分支同一个风格
+        #   （那类高优先级分支都在 cooldown 递减之前，查了会死锁）。
+        # ★★ 实战连招（用户提供视频：「黑崎一护 始解」）★★
+        #   画面原文（bilibili 视频，2026-10-17 用户发来）：
+        #     普通  : `adj kj jjj su`  结尾 wu / i / si 三选一 -> 伤害 470/700/900
+        #     台阶连: `adj wj kj jjj su`  结尾同上          -> 伤害 570/800/1000
+        #   按项目键位表解出来的动作序列：
+        #     adj  = 后→前+J   -> catch1（突进抓，带位移）
+        #     wj   = ↑+J       -> skill2（上砍，只有台阶连有）
+        #     kj   = K→J       -> jump + 空中 attack（跳砍）
+        #     jjj  = J×3       -> attack ×3
+        #     su   = ↓+U       -> zhao2（下抓）
+        #     结尾 wu=↑+U(zhao3) / i=bisha / si=bishaSUPER —— **三选一，不是连按**
+        #   为什么要做成"队列"：规则是**逐帧独立决策**，天然打不出连招
+        #   （实测 71% 的 J→U 衔接只是巧合，不是成型的连段）。
+        #   ★ 优先级：已经在连招里就一路走完，只被"自己被打"打断 ★
+        if self._combo:
+            _st_opp = int(getattr(opp, "state", 0))
+            _stunned = _st_opp in (21, 22, 23, 24)
+            if int(getattr(me, "hitstun", 0)) > 0 or me.hp <= 0:
+                # 自己被打进硬直 -> 连招自然中断
+                self._combo = []
+                self._combo_miss = 0
+            else:
+                # ★ 命中确认（hit-confirm）★
+                #   实测教训（rule_combo 6 局：打出伤害 1886 -> 1550，净伤害 +655 -> -128）：
+                #   没有命中确认时，catch1 抓空也照样把 45~55 帧的固定动作打完，
+                #   等于白扔 0.9 秒输出 —— **连招反而亏了 336 点伤害**。
+                #   现在：第一击之后只要对手没进入受击状态（21/22/23/24）就记一次 miss，
+                #   连续 8 帧都 miss 就放弃连招、回到正常决策。
+                if self._combo_step >= 1:
+                    if _stunned:
+                        self._combo_miss = 0
+                    else:
+                        self._combo_miss += 1
+                        if self._combo_miss > 8:
+                            self._combo = []
+                            self._combo_miss = 0
+                if not self._combo:
+                    pass          # 刚被放弃：往下走正常决策
+                else:
+                    name, left = self._combo[0]
+                    if left <= 1:
+                        self._combo.pop(0)
+                        self._combo_step += 1
+                    else:
+                        self._combo[0] = (name, left - 1)
+                    self.cooldown = 1
+                    if name in ACTION_INDEX:
+                        return ACTION_INDEX[name]
+                    self.key_intent = name
+                    return ACTION_INDEX["noop"]
+
+        _ost_now = int(getattr(opp, "state", 0))
+        _opp_air = bool(getattr(opp, "in_air", False))
+        if not bool(getattr(me, "in_air", False)):
+            # 1) 对手倒地 / 起身中 -> ↓U（往下压，正好打地上的）
+            #    23 = HURT_DOWN，24 = HURT_DOWN_TAN（见 docs/BRIDGE.md 实测表）
+            if _ost_now in (23, 24) and dist <= 110.0:
+                self.cooldown = 2
+                self._round4_dbg["down_u"] = self._round4_dbg.get("down_u", 0) + 1
+                return ACTION_INDEX["zhao2"]           # 下u
+            # 2) 对手在空中 -> ↑U（对空）
+            #    用户指正：「上U 对空」—— 只要他在空中就该往上打，别等 dy 变大
+            if _opp_air and dist <= self.overhead_dist:
+                self.cooldown = 3
+                self._antiair_dbg["zhao3"] += 1
+                return ACTION_INDEX["zhao3"]           # 上u
+            # 3) 对手受击硬直且贴身 -> 交给**下面的连招尾段**处理
+            #    （原来这里是"单发 U 追击"，现在改成打完整连招更适合；
+            #      实测依据见连招那一段的注释：单发 U 只占 20%，连招能到 470~1020）
+
+        # ★ 连招（**惩罚/追击用**，见上面「实战连招」的说明）★
+        #   ★ 为什么改成"只在对手受击/击飞时接" ★
+        #   实测（规则驱动 6 局/组，主指标=打出伤害）：
+        #     * 不打连招              1886 ± 156  净伤害 +655  4-1-1
+        #     * 连招当**起手**（突进抓自由对手） 1550 ± 190  净伤害 -128  0-3-3
+        #     * 加命中确认后          1818 ± 124  净伤害 +424  1-0-5
+        #   也就是说：catch1 突进抓一个"自由的"对手最容易抓空，
+        #   抓空还要走完 45~55 帧固定动作 = 白扔 0.9 秒输出。
+        #   视频里那套连招本质是**惩罚**（对手已经在劣位），所以现在只在
+        #   `opp.state in (21,22)`（受击硬直 / 击飞）且贴身时接，
+        #   并且**只用尾段** `J×3 -> ↓U -> 收尾`（不打容易空的 dash 起手）。
+        if self._combo_cd > 0:
+            self._combo_cd -= 1
+        if (not self._combo
+                and self._combo_cd <= 0
+                and not bool(getattr(me, "in_air", False))
+                and int(getattr(me, "hitstun", 0)) == 0
+                and _ost_now in (21, 22)
+                and dist <= 100.0
+                and self.cooldown <= 0
+                and self.rng.random() < 0.7):
+            qi_now = float(getattr(me, "mp", 0.0))
+            hoarding = (bool(getattr(me, "can_wankai", False))
+                        and self._wants_wankai)
+            _forms = int(getattr(me, "forms_used", 0) or 0)
+            steps = [("attack", 4), ("attack", 4), ("attack", 4)]
+            if _forms >= 1:
+                # ★★ 卐解（变身之后）的收尾 —— 用户第二个视频 ★★
+                #   `... jjj [L] si` -> 1020；气不够退化成 wi(680) / wu(500)
+                # ★ 二变（形态 2）多接一手 ↑J —— 用户 2026-10-17：
+                #   「二变以后的上 j 很强势，可以当起手和连招」，
+                #   即他说的「j 一套上 j」= J×3 -> ↑J。
+                #   实测形态 2 的 ↑J 接触距离可达 142.5（见附七补）。
+                if _forms >= 2 and self.technique_mix:
+                    steps.append(("skill2", 4))
+                if qi_now >= 300.0 and not hoarding:
+                    steps += [("recover", 4), ("bishaSUPER", 4)]   # L si -> 1020
+                elif qi_now >= 100.0 and not hoarding:
+                    steps += [("bishaUP", 4)]                      # wi -> 680
+                else:
+                    steps += [("zhao3", 4)]                        # wu -> 500
+            else:
+                # ★★ 始解（未变身）的收尾 —— 用户第一个视频 ★★
+                #   `... jjj su wu/i/si`（su=↓U 先接一手，再按气量收尾）
+                steps += [("zhao2", 4)]
+                if qi_now >= 300.0 and not hoarding:
+                    steps.append(("bishaSUPER", 4))                # si
+                elif qi_now >= 100.0 and not hoarding:
+                    steps.append(("bisha", 4))                     # i
+                else:
+                    steps.append(("zhao3", 4))                     # wu
+            self._combo = steps
+            self._combo_step = 0
+            self._combo_miss = 0
+            self._combo_cd = 45                   # 大约 0.75 秒内不再起手
+            self._combo_dbg = getattr(self, "_combo_dbg", {"started": 0})
+            self._combo_dbg["started"] += 1
+            name, left = self._combo[0]
+            self._combo[0] = (name, left - 1)
+            self.cooldown = 1
+            return ACTION_INDEX.get(name, ACTION_INDEX["noop"])
+
+        # ★★ 起身择时压制（用户指正）★★
+        #   先维护"对手倒地了多少帧"这个计数（用桥接的 actionState，
+        #   23=HURT_DOWN / 24=HURT_DOWN_TAN）。
         if self.pressure:
-            # ★★ count the **whole invincible period**: 22(launched) + 23(down) + 24(down bounce) ★★
-            #   User correction: "you ignored that **the time being launched is also
-            #   invincible**, so you never land on the wake-up"
-            #   Measured: all three states have a 0.00% HP-loss rate (= invincible),
-            #             and the whole invincible period is a median of 99 frames (3.3s).
+            # ★★ 数**完整无敌期**：22(击飞) + 23(倒地) + 24(倒地弹) ★★
+            #   用户指正：「你忽略了**受击飞出去的时间也是无敌的**，
+            #              所以你总是压不到起身」
+            #   实测：这三个状态掉血率都是 0.00%（=无敌），
+            #         无敌期总长 中位 99 帧（3.3 秒）。
             _ost = int(getattr(opp, "state", 0))
             if _ost in (22, 23, 24):
                 if self._opp_inv_frames == 0:
@@ -567,7 +732,7 @@ class RulePolicy:
 
             if self._opp_down_frames > 0 and vert_ok:
                 if self._opp_down_frames < self.inv_start:
-                    # ── still early: close to attack distance and claim the spot for the wake-up hit ──
+                    # ── 还早：贴到攻击距离，为起身那一击占位 ──
                     if dist > self.eff_range:
                         self._pressure_dbg["closed_in"] += 1
                         self.cooldown = 2
@@ -576,96 +741,219 @@ class RulePolicy:
                             self.key_intent = "dashRight" if gap > 0 else "dashLeft"
                         return (ACTION_INDEX["right"] if gap > 0
                                 else ACTION_INDEX["left"])
-                    # ── settle at the **ideal attack distance**, then hold guard (not idle) ──
-                    #   This used to just `noop` -> measured idling rose to 20~23%.
-                    #   The user asked for less idling; and he had already said "doesn't
-                    #   know how to guard" (measured at only 1.7%).
-                    #   Holding **guard** while waiting for the wake-up is both the real
-                    #   way to play it (his wake-up counterattack gets blocked) and it
-                    #   removes that meaningless noop block.
+                    # ── 卡到**最佳出招距离**，然后架防御（不是发呆）──
+                    #   原来这里直接 `noop` -> 实测待机升到 20~23%。
+                    #   用户要求优化待机；而且他早就说过"不会防御"（实测仅 1.7%）。
+                    #   等起身时**架着防御**既是真实打法（他起身反击会被防住），
+                    #   又消掉了那块无意义的 noop。
                     self._pressure_dbg["waited"] += 1
                     self.cooldown = 1
-                    # 1) facing must be right first (only then can the wake-up instant connect)
+                    # 1) 朝向必须先对（起身瞬间才打得中）
                     if not facing_ok:
                         return (ACTION_INDEX["right"] if gap > 0
                                 else ACTION_INDEX["left"])
-                    # 2) too far -> walk over (dash if very far)
+                    # 2) 太远 -> 走过去（很远则冲刺）
                     if dist > self.ideal_dist + 10.0:
                         self._position_dbg["too_far"] += 1
-                        if dist > self.ideal_dist * 3 and self._dash_left <= 0:
+                        _dash_gate = 1.5 if self.spacing else 3.0
+                        if dist > self.ideal_dist * _dash_gate and self._dash_left <= 0:
                             self._dash_left = self.dash_cd
                             self.key_intent = ("dashRight" if gap > 0
                                                else "dashLeft")
                         return (ACTION_INDEX["right"] if gap > 0
                                 else ACTION_INDEX["left"])
-                    # 3) too close -> back off a bit (hugging him makes you cross over / attack backwards)
+                    # 3) 太近 -> 退一点（贴身容易越过/出招反向）
                     if dist < self.ideal_dist - 20.0:
                         self._position_dbg["too_close"] += 1
                         return (ACTION_INDEX["left"] if gap > 0
                                 else ACTION_INDEX["right"])
-                    # 4) in position -> **hold guard** (instead of the old noop)
+                    # 4) 到位 -> **架防御**（替代原来的 noop）
                     self._position_dbg["guard"] += 1
                     return ACTION_INDEX["defend"]
-                # ── wake-up window: **keep pressing** (the invincible period varies
-                #    96~226 frames, so a single fixed timing easily misses; attack
-                #    continuously from inv_start and one of them will land exactly at the
-                #    wake-up) ──
+                # ── 起身窗口：**持续压**（无敌期长度有波动 96~226 帧，
+                #    固定一次择时容易落空；从 inv_start 起连续发招，
+                #    总有一次正好落在起身那一刻）──
                 self._pressure_dbg["timed_attack"] += 1
                 self._inv_dbg["attacked"] += 1
                 self.cooldown = 4
                 if dist <= 45.0:
-                    return ACTION_INDEX["attack"]          # point blank: light-attack opener combo
+                    return ACTION_INDEX["attack"]          # 贴身：普攻起手连段
                 if dist <= self.eff_range:
-                    return ACTION_INDEX["catch1"]          # mid range: dash-in grab
-                return ACTION_INDEX["zhao1"]               # long range: sword qi
+                    return ACTION_INDEX["catch1"]          # 中距：突进抓
+                return ACTION_INDEX["zhao1"]               # 远距：剑气
 
 
-        # (dy_now / vert_ok / dash_intent were already computed at the top of act(),
-        #   see the comment before the cooldown branch above -- the gate has to be added
-        #   there too.)
+        # （dy_now / vert_ok / dash_intent 已在 act() 开头算好，
+        #   见上面 cooldown 分支前的那段注释 —— 那里也必须加闸门。）
         if self._dash_left > 0:
             self._dash_left -= 1
 
-        # ★★ fill in "the actions the demonstration never performs" ★★
+        # ★★ 补齐"示范里从来没有的动作" ★★
         #
-        # The collection script now automatically warns "which action classes have 0
-        # samples". Before this block was added, the measurement was:
-        #   **[warn] 10 action classes have 0 samples: noop, defend, skill1, skill2,
+        # 采集脚本现在会自动报警"哪类动作样本为 0"。加上这段之前实测：
+        #   **[warn] 有 10 类动作样本为 0：noop, defend, skill1, skill2,
         #    zhao2, zhao3, bishaUP, bishaSUPER, ghostStep, assist**
-        # In other words half of the 20 actions were never performed by the demonstration
-        # -- the model can never learn defence, the super, substitution or assist.
-        # This is exactly the root cause of the user's "you only attack, you can't guard,
-        # you can't fight at range and you never fire a special".
+        # 也就是说 20 个动作里有一半示范从没做过 ——
+        # 模型永远学不会防御、超必杀、替身术、援助。
+        # 这正是用户说的"你只会攻击不会防御不会远攻不会放必杀"的根因。
         #
-        # Filling in by value (all before pick_by_distance, so higher priority):
+        # 按价值排序补（都在 pick_by_distance 之前，优先级更高）：
 
-        # 1) **defence**: the opponent is attacking and is close -- this is the life-saving
-        #    action that most needs to be learned.
-        #    (In the source FighterKeyCtrler, `defense()` is `GameInputer.down()`,
-        #     i.e. the S key)
+        # 1) **防御**：对手正在出招且距离近 —— 这是最该学会的保命动作。
+        #    （源码 FighterKeyCtrler 里 `defense()` 就是 `GameInputer.down()`，
+        #      也就是 S 键）
         #
-        # **I once changed this to "copy the bot's updateDefenseAI table", measured
-        # harmful, reverted.**
-        # Evidence: after changing it to a 22% trigger rate, the 20s/60s/180s collection
-        #   rewards dropped from the 169.3 baseline to +23 ~ +57 (three runs: off1/off2/
-        #   burst, all averaging around 50). In other words **the more you guard, the less
-        #   you output, and the damage blocked did not make up for that loss**.
-        # Lesson: copying the opponent's behaviour is not necessarily good for me -- its
-        #   table is tuned to its own attack rhythm and resources (it can counterattack at
-        #   any time), not to mine.
-        if opp_attacking and dist <= 90.0 and self.rng.random() < 0.55:
+        # **曾经改成"照抄人机 updateDefenseAI 的表"，实测有害已回退。**
+        # 证据：改成 22% 触发率之后，20 秒/60 秒/180 秒的采集奖励
+        #   从基线 169.3 掉到 +23 ~ +57（三轮：off1/off2/burst，
+        #   均值都在 50 上下）。也就是说**防得越多、输出越少，
+        #   而挡掉的伤害没能补回这个损失**。
+        # 教训：照抄对手的行为不一定对我有利 —— 它的表是配它自己的
+        #   出招节奏和资源（它随时能反打），不是配我的。
+        # ★★ 架防要"架住"，不能一帧一帧掷骰子 ★★
+        #   用户指正 2026-10-17：「防守有时候只防第一下后面就不防了」。
+        #   实测（`runs/dbg_dagger/combo_probe3.csv`）：威胁帧（对手出招且距离≤90）
+        #   802 个，其中架防只有 **49%** —— 因为原来是**每帧独立**掷 55%：
+        #   `if opp_attacking and dist <= 90 and self.rng.random() < 0.55: return defend`
+        #   架住第一下之后有 45% 的帧"松手"，而游戏里**松手=破防**，后续连段全吃。
+        #   现在改成**一旦决定架防就保持住**（`_guard_frames` 续 12 帧），
+        #   威胁持续就不断续命；同时保留 55% 的"要不要架"的初始概率，
+        #   免得上一次那个"防得太多、输出变少"的坑（见上面的实测教训）。
+        if self._guard_frames > 0:
+            self._guard_frames -= 1
+        if self._ghost_cd > 0:
+            self._ghost_cd -= 1
+        # ★★ 技术动作：幽步(替身术) / 支援 —— **必须在架防之前**（technique_mix）★★
+        #
+        # 为什么：用户 2026-10-17 观感「变身二次以后也几乎不用支援/幽步」。
+        # 实测（wankai11，13.5 万帧，当前规则标签）：ghostStep 的触发条件
+        # `hitstun>0 or (对手出招 and 距离<=45)` 成立 **20665 帧（15.3%）**，
+        # 但这些帧里 **76.7% 标成了 defend、ghostStep 连 1.4% 都不到** ——
+        # 因为架防分支在它前面 return，`opp_attacking and dist<=45` 这条路
+        # **永远到不了**（只剩 hitstun>0 时 25% 的窄缝）。
+        # 源码依据（docs/GAME_AI_LOGIC.md §4）：替身术 `updateGhostStep` 需要
+        # 距离 ≤80x40、气 ≥80、自身 state 40，**对手出招时 8/10** ——
+        # 也就是说人机自己就在用"幽步躲招"，而我们在硬架。
+        # 幽步是**免伤**（代价 80 气），比吃下这一下再防后续更强。
+        if self.technique_mix:
+            _st_now = int(getattr(me, "state", 0))
+            # ★★ 攒气期不许用幽步 ★★
+            #   实测（2026-10-17，rule_tech2 前 4 局）：幽步一次 80 气，
+            #   而它在"还在攒气准备变身"的阶段也会放 -> 气永远到不了 300，
+            #   **4 局全部 0 次变身**（基线是每局 1~2 次），战绩 0-1-3 明显变差。
+            #   所以：只要还打算变身（`_wants_wankai` 且能变），就把气留给 300；
+            #   两次变完之后气没有更好的用途，那时才允许幽步/支援。
+            #   ——这正是用户说的「二变以后得换一个用气的思路」：
+            #     变之前"攒"，变之后"花"。
+            _hoarding = (bool(getattr(me, "can_wankai", False))
+                         and self._wants_wankai and qi < 300.0)
+            if (not _hoarding
+                    and opp_attacking and dist <= 80.0 and qi >= 80.0
+                    and _st_now != 40 and self.rng.random() < self.tech_ghost_p):
+                self._tech_dbg["ghost"] += 1
+                self.cooldown = 2
+                return ACTION_INDEX["ghostStep"]
+            # 支援：**只在没被威胁时叫**（否则等于把人叫出来挨打）
+            if (not opp_attacking and dist <= 250.0
+                    and self.rng.random() < self.tech_assist_p):
+                self._tech_dbg["assist"] += 1
+                self.cooldown = 2
+                return ACTION_INDEX["assist"]
+
+            # ★★ 破防招：实测**躲不掉**，这条已回退（保留结论）★★
+            #   假设：naruto 的 必杀(I,140)/超杀(↓I,260)/空中J(230) 都 isBreakDef，
+            #         架防无效 -> 改成"看到 state 12/13 就幽步/后撤"。
+            #   实测（3 场三局两胜整把，rule_full vs rule_full2）：
+            #     * 对手在 state 12/13 时的伤害 570 -> 560（**几乎没降**）；
+            #     * 原因：那几帧我们**多数已经在受击(21)里**，多段伤害是事后结算的，
+            #       能动的帧本来就少，躲不躲都一样；
+            #     * 代价：架防被换成后撤/幽步 -> 丢位置、丢气，
+            #       三场总承受 **3896 -> 5307（+36%）**，净伤害 +7246 -> +6330。
+            #   => 结论：破防招的危害在"**别让他有起手机会**"（压制/站位/受身），
+            #      不在"看到他放技能再躲"。这条留作反面记录，不再启用。
+        # ★★ 悬停 + 后摇惩罚（用户 2026-10-18 描述的打法）★★
+        #   用户的实战经验（原话）：
+        #     「我评估敌人攻击距离比较好，用冲刺来保持距离，一个冲刺的距离就能打到，
+        #       如果他放远攻露后摇就能直接抓，他贴近也能直接拦截」
+        #   实测他的录像：悬停中位 **189px**（一个冲刺 ≈190~220px），平均交战距离
+        #   123~152；而规则 `ideal_dist=42` 是贴脸 —— 这就是他每帧承受只有 AI 一半
+        #   （170 vs 326）的原因。
+        #   实现：① 跟踪对手"出招 -> 收招"的边沿，给他 14 帧后摇窗口；
+        #         ② 窗口内且在一个冲刺距离内 -> 直接 `catch1`（突进抓，reach 305，
+        #            本身就是位移+抓取，最符合"冲刺进去抓"）；
+        #         ③ 其余时间**悬停**在 hover_dist，不再无脑贴脸。
+        if self.spacing:
+            if opp_state in (10, 11, 12, 13):
+                self._opp_atk_prev = opp_state
+                self._opp_recover = 0
+            elif self._opp_atk_prev:
+                self._opp_atk_prev = 0
+                self._opp_recover = 14          # 后摇窗口（约 0.23 秒）
+            elif self._opp_recover > 0:
+                self._opp_recover -= 1
+            if (self._opp_recover > 0
+                    and int(getattr(me, "hitstun", 0)) == 0
+                    and not bool(getattr(me, "in_air", False))
+                    and vert_ok and facing_ok
+                    and dist <= 190.0              # 一个冲刺的距离内
+                    and self.cooldown <= 0):
+                self.cooldown = 3
+                self._tech_dbg["punish_recover"] = self._tech_dbg.get("punish_recover", 0) + 1
+                return ACTION_INDEX["catch1"] if dist > 60.0 else ACTION_INDEX["attack"]
+
+        # ★★ 间距状态机 —— **实测有害，已回退**（2026-10-18）★★
+        #   用户打法：「用冲刺保持距离，一个冲刺的距离就能打到」。
+        #   我按三档实现（<hover*0.55 后撤 / >hover*1.3 冲刺靠近 / 中间才出手）。
+        #   真机对 LV4：**0-2、0-2 连输两场**（加之前是 2-1 胜 / 2-0 胜）。
+        #   原因：主战流程本来就靠 `pick_by_distance` 贴到出招距离，
+        #   这套状态机把"已经能打"的帧改成了后撤/冲刺，等于**主动放弃输出窗口**；
+        #   而 LV4 的压制很强，一后撤就再也回不去，被压到墙角。
+        #   => 结论：人的"悬停"靠的是**判断对手攻击距离**，不是机械的
+        #      "距离小于 82 就后撤"；这个判断我用一个距离阈值代替不了。
+        #      后摇惩罚那一半（上面 `_opp_recover`）保留，它是有效的（65%->73%）。
+        if (opp_attacking and dist <= 90.0
+                and (self._guard_frames > 0 or self.rng.random() < 0.55)):
+            self._guard_frames = 12
             return ACTION_INDEX["defend"]
+
+        # ★★ 二变后 ↑J 起手（technique_mix）★★
+        #   用户观感（2026-10-17）：「二变以后的上 j 很强势，范围很大，
+        #   可以当起手和连招」。实测（附七补，用户自己打的一局）：
+        #   形态 2 的命中最远接触 **142.5**，且 **75% 在空中**（空中前冲斩）。
+        #   所以两个条件必须同时满足才起手：
+        #     ① `forms_used >= 2`（只有形态 2 才这么远）；
+        #     ② **对手不在出招** —— 角色在空中不能格挡，对方正在打我们时起跳
+        #        就是拿血换伤害（这也是"二变后承受 35/百帧"偏高的嫌疑之一）。
+        if self.technique_mix:
+            if self._skill2_cd > 0:
+                self._skill2_cd -= 1
+            _f2 = int(getattr(me, "forms_used", 0) or 0)
+            if (_f2 >= 2 and self._skill2_cd <= 0
+                    and not opp_attacking
+                    and int(getattr(me, "hitstun", 0)) == 0
+                    and not bool(getattr(me, "in_air", False))
+                    and vert_ok and facing_ok
+                    # ★ 距离带：上限 110（形态2 实测最大接触 142.5，但那是
+                    #   "往前冲"打到的，起手取 110 更稳）；下限按用户要求
+                    #   「二变以后要更多」放到 25（贴身也允许）。
+                    #   ⚠️ 别加回 60 的下限 —— 实测 6 局里 96% 的 ↑J 发生在
+                    #   变身之前（射程 10->60 带来的），档位 2 只有 43 帧。
+                    and 25.0 <= dist <= self.reach_skill2_form2
+                    # 概率/冷却按用户要求加码：0.15/45 帧 -> 0.45/30 帧
+                    and self.rng.random() < 0.45):
+                self._skill2_cd = 30          # 约 0.5 秒内不重复起手
+                self.cooldown = 2
+                self._tech_dbg["skill2"] = self._tech_dbg.get("skill2", 0) + 1
+                return ACTION_INDEX["skill2"]
+
         if self.cooldown > 0:
             if _d is not None:
                 _d["cooldown"] += 1
             self.cooldown -= 1
-            # **Never return noop here again** (this used to be the source of 3285 frames
-            # of genuine idling).
-            # During the cooldown, keep closing if out of reach and attack as usual if in
-            # reach -- let the game gate it.
+            # **绝对不要再返回 noop**（这里曾经就是 3285 帧真发呆的来源）。
+            # 冷却期够不着就继续靠近，够得着就照常出招 —— 让游戏自己去 gate。
             gap_now = opp.x - me.x
-            # ★ height does not line up -> do not attack, level out first (this is "the
-            #   right thing to do") ★
+            # ★ 高度没对上 -> 不发招，先拉平（这才是"该做的事"）★
             if not vert_ok:
                 if self._dash_left > 0:
                     self._dash_left -= 1
@@ -677,7 +965,7 @@ class RulePolicy:
             if abs(gap_now) > self.attack_range:
                 return ACTION_INDEX["right"] if gap_now > 0 else ACTION_INDEX["left"]
             _rq = (bool(getattr(me, "can_wankai", False))
-                   and not self._wankai_done)
+                   and self._wants_wankai)
             act_now = pick_by_distance(
                 self.reach, abs(gap_now),
                 qi=0.0 if _rq else getattr(me, "mp", 0.0))
@@ -686,18 +974,14 @@ class RulePolicy:
             return ACTION_INDEX.get(act_now, ACTION_INDEX["attack"])
 
 
-        # 1b) ★★ Bankai / transformation (transform as soon as qi hits 300) ★★
-        #   User correction: Ichigo with full qi enters a stronger state with J+K
-        #   (screenshot t=0072s as evidence).
-        #   Source `FighterMcCtrler.doWanKaiAction()`:
-        #      needs useQi(300) to be usable; actionState=50; **invincible while transforming**.
-        #   Why it takes priority over the super: the transformation is a **permanent
-        #   upgrade** (changes form, light attacks carry sword qi), while the super is a
-        #   one-off 600 damage -- transforming first pays better.
-        #   Conditions: qi full + not off the ground (must be in a state that can do ground
-        #   moves) + not already transformed + height lines up.
-        # ★ only consider transforming at a "very large advantage" (see the accounting in
-        #   __init__) ★
+        # 1b) ★★ 万解 / 变身（气满 300 就变）★★
+        #   用户指正：一护满气 J+K 进入更强状态（截图 t=0072s 实证）。
+        #   源码 `FighterMcCtrler.doWanKaiAction()`：
+        #      useQi(300) 才能放；actionState=50；**变身期间无敌**。
+        #   为什么优先于超必杀：变身是**永久强化**（改变形态、普攻带剑气），
+        #   而超必杀是一次性 600 伤害 —— 先变身收益更大。
+        #   条件：气满 + 不在地面之外（要在能出地面招的状态）+ 没变过 + 高度对上。
+        # ★ 只有"非常大优势"才考虑变身（见 __init__ 里的账）★
         hp_lead_now = float(getattr(me, "hp", 0.0)) - float(getattr(opp, "hp", 0.0))
         big_lead = hp_lead_now >= self.wankai_hp_lead
         if big_lead:
@@ -705,71 +989,77 @@ class RulePolicy:
         else:
             self._wankai_value_dbg["lead_no"] += 1
 
-        # ★★ qi at 300 and transformation available -> **always transform** (user
-        #    correction) ★★
-        #   "I feel the **super is not worth as much as the transformation**, it should be
-        #    **far worse**"
-        #   The data supports it: the super trades 300 qi for 710 damage (2.37/qi), while
-        #   the same 300 qi buys 3 I's = 900 damage, or a **transformation** (a permanent
-        #   form upgrade).
-        #   => `big_lead` **should not** be used here (it should only govern "whether to
-        #      save during the qi-saving phase").
-        # ★ we must confirm **this character can transform** ★
-        #   The trap we stepped in: `can_wankai` was missing, so characters that cannot
-        #   transform (or when `hasWankai()` is false) **still sent the transformation
-        #   intent** and wasted time waiting for qi to reach 300, while the super was
-        #   blocked by the "don't super when you can transform" logic -> all the big moves
-        #   were dead.
+        # ★★ 气到 300 且能变身 -> **一定变身**（用户指正）★★
+        #   「我感觉**超杀没有变身收益大** 应该是**远不如**」
+        #   数据支持：超杀 300 气换 710 伤害（2.37/气），
+        #   而同样 300 气可换 3 次 I = 900 伤害，或者**变身**（形态永久升级）。
+        #   => `big_lead` **不该**用在这里（它只该管"攒气阶段要不要省"）。
+        # ★ 必须确认**这个角色能变身** ★
+        #   踩过的坑：原来漏了 `can_wankai`，于是不能变身的角色
+        #   （或 `hasWankai()` 为假时）**照样发变身意图**、白等气到 300，
+        #   而超杀又被"能变身时不用超杀"的逻辑挡住 -> 大招全废。
         _can_wk = bool(getattr(me, "can_wankai", False))
-        if (_can_wk and not self._wankai_done and qi >= 300.0 and vert_ok
+        if (_can_wk and self._wants_wankai and qi >= 300.0 and vert_ok
                 and not in_air):
             self._wankai_tries += 1
             self._wankai_dbg["fired"] += 1
-            # Tried enough times without success -> give up on transforming, stop sitting
-            # on the qi
+            # 试够次数还没成 -> 放弃变身，别再卡着气不放
             if self._wankai_tries >= self.wankai_max_tries:
                 self._wankai_done = True
-            self.key_intent = "wankai"
             self.cooldown = 10
-            # the index is only a carrier, what actually goes out is key_intent (wankai = J+K)
-            return ACTION_INDEX["attack"]
+            # ★ 变身现在是**动作 20**，不再是 `attack` 载体 + `key_intent` ★
+            #   这样模型自己也能选它（BC/DQN 学得到），而"发出去"由 runner
+            #   对 `wankai` 特判走原子序列（常规逐帧发键发不出万解）。
+            #   不再设 key_intent：DAgger 里应当让**模型**驱动这一帧，
+            #   规则只提供标签（标签就是 20）。
+            return ACTION_INDEX["wankai"]
 
-        # 2) **super**: fire it when the qi is there, it is this character's strongest
-        #    move (Ichigo: 600 damage).
-        #    It used to never be fired at all, i.e. holding a super and not using it.
-        #    The threshold cannot be 300 (full qi) -- measured, the qi gets spent by other
-        #    moves before it ever reaches the maximum, so bishaSUPER samples stayed at 0.
-        #    Leave a little margin.
-        #    Note: at full qi (>=300) the branch above transforms first; after transforming
-        #    the qi is zeroed, so the 240 threshold here corresponds to "qi re-accumulated
-        #    after the transformation".
-        # ★ not transformed yet and able to transform -> **save qi**, do not spend it at 240 ★
-        #   Measured lesson: after adding Bankai (needs 300 qi), the maximum qi in a whole
-        #   match was only 212 -- because this bishaSUPER branch spent 300 qi at 240, so
-        #   Bankai was never reachable.
-        # ★ only save qi at a "big advantage" ★
-        #   Otherwise the qi goes into specials as usual -- user correction:
-        #   "in the normal state you can also press wi or si for output"
+        # 2) **超必杀**：气够就放，本角色最强招（一护 600 伤害）。
+        #    以前完全不放，等于手握大招不用。
+        #    阈值不能写 300（气满）—— 实测气到不了满值就被别的招花掉了，
+        #    结果 bishaSUPER 样本恒为 0。留一点余量。
+        #    注：气满(>=300)时上面那条会先变身；变身后气清零，
+        #    所以这里的 240 阈值对应"变身之后重新攒的气"。
+        # ★ 未变身且能变身 -> **攒气**，别在 240 就把气花掉 ★
+        #   实测教训：加万解(需 300 气)后，一整局最大 qi 只有 212 ——
+        #   因为这条 bishaSUPER 在 240 就花掉 300 气，万解永远够不到。
+        # ★ 只有"大优势"时才攒气 ★
+        #   否则气照常花在必杀上 —— 用户指正：
+        #   「平时状态下也可以按 wi 或 si 输出」
+        # ★ 攒到什么时候为止：一护可以变身**两次**（用户指正），
+        #   所以在"还能变"期间一直攒（`_wants_wankai`），两次都变完
+        #   才开始把气花在必杀上 —— 那时标签里才会出现 bisha/bishaSUPER。
         reserve_qi = (bool(getattr(me, "can_wankai", False))
-                      and not self._wankai_done
+                      and self._wants_wankai
                       and big_lead)
-        # ★ si = ↓+I (bishaSUPER) ★ the user named "you can also press si for output in the
-        #   normal state".
-        #   Careful: it costs 300 qi, so **it is only equivalent when saving qi at a big
-        #   advantage**; firing it normally empties the qi -- it stays at the 240 threshold
-        #   (as before), but its priority goes after wi (wi costs only 100 qi, better value).
-        # ★★ look at where the guy is before the super (user correction) ★★
-        #   "before you fire the super, look at where the guy is"
-        #   `bishaSUPER` costs 300 qi, so a whiff is very expensive -> it must
-        #     1) face the opponent (facing away is a guaranteed whiff)
-        #     2) be within reach (bishaSUPER in the reach table, with a 5% margin)
+        # ★★ 快攒够 300 时也攒气（2026-10-18，用户要求"按标签层改"）★★
+        #   问题：v10/v11 一变完就把气花在 bisha/bishaUP 上，第二次变身永远攒不到
+        #   （v11 真机 3 场只有 1 场双变身）。观测里加了 `qi_gap` 也没解决 ——
+        #   说明**标签本身**也在教它"气一到能放就放"：`reserve_qi` 只在
+        #   `big_lead`（没落后 400 血）时成立，稍微落后就放开了花气。
+        #   现在：只要还在攒变身的计划里，且**离 300 只差 80 以内**，就不许花。
+        #   为什么是 80 而不是 100：bisha 恰好花 100，差 99 时花掉等于前功尽弃；
+        #   80 是个保守窗口，既保住"差一点"的气，又不会过早锁死输出。
+        _qi_near = (bool(getattr(me, "can_wankai", False))
+                    and self._wants_wankai
+                    and 220.0 <= qi < 300.0)
+        if _qi_near and not reserve_qi:
+            self._near_hoard = getattr(self, "_near_hoard", 0) + 1
+        reserve_qi = reserve_qi or _qi_near
+        # ★ si = ↓+I（bishaSUPER）★ 用户点名"平时也可以按 si 输出"。
+        #   注意：它花 300 气，所以**只有在大优势攒气时才等价**；
+        #   平时放它会把气清空 —— 保留在 240 门槛（原来就是），
+        #   但把优先级放在 wi 之后（wi 只要 100 气，性价比更高）。
+        # ★★ 超杀前先看人在哪（用户指正）★★
+        #   「你放超杀之前要看看人在哪」
+        #   `bishaSUPER` 花 300 气，空挥代价极大 -> 必须
+        #     ① 面朝对手（背对着必空）
+        #     ② 在射程内（射程表里的 bishaSUPER，留 5% 余量）
         _super_reach = float(self.reach.get("bishaSUPER", 300.0)) * 0.95
-        # ★ only consider the super when **you cannot transform** (user correction: the
-        #   super is far worse than the transformation) ★
-        #   When you can transform, the qi should be kept for the 300 Bankai and not spent
-        #   on the super at 240.
+        # ★ 超杀只在**不能变身**时才考虑（用户指正：超杀远不如变身）★
+        #   能变身时气要留给 300 的万解，不该在 240 就被超杀花掉。
         _can_transform = (bool(getattr(me, "can_wankai", False))
-                          and not self._wankai_done)
+                          and self._wants_wankai)
         if qi >= 240.0 and not reserve_qi and not _can_transform:
             if not facing_ok:
                 self._super_dbg["blocked_facing"] += 1
@@ -779,7 +1069,7 @@ class RulePolicy:
             if dist > _super_reach:
                 self._super_dbg["blocked_dist"] += 1
                 self.cooldown = 2
-                # Out of reach, so don't waste the qi -- walk over (dash if far)
+                # 够不着就别浪费气 —— 走过去（远则冲刺）
                 if dist > _super_reach * 1.6 and self._dash_left <= 0:
                     self._dash_left = self.dash_cd
                     self.key_intent = "dashRight" if gap > 0 else "dashLeft"
@@ -788,25 +1078,20 @@ class RulePolicy:
             if vert_ok:
                 self._super_dbg["fired"] += 1
                 return ACTION_INDEX["bishaSUPER"]
-        # 2b) **upward super** (↑+I) -- another class that used to have 0 samples
-        # ★ wi = ↑+I (bishaUP): the user named "you can also press wi for output in the
-        #   normal state" ★
-        #   The old threshold was qi>=200 with a 15% chance -> too conservative (measured:
-        #   very few samples).
-        #   Now: qi >= 100 is enough to convert into damage (no need to hoard up to 200),
-        #   and the chance is raised to 30%.
-        # ★★ wi(↑+I) **only when the opponent is really airborne** (user correction) ★★
-        #   "I **whiffed an up-i again**, I think **there is no need to keep firing up-i**,
-        #    **the lv3 bot doesn't like jumping that much**"
+        # 2b) **上段超必杀**（↑+I）—— 也是以前 0 样本的一类
+        # ★ wi = ↑+I（bishaUP）：用户点名"平时也可以按 wi 输出" ★
+        #   原门槛 qi>=200 且 15% 概率 -> 太保守（实测样本很少）。
+        #   现在：气 >= 100 就能换伤害（不必干攒到 200），概率提到 30%。
+        # ★★ wi(↑+I) **只在对手真的在空中时**才放（用户指正）★★
+        #   「还是**空了一个上i**，我觉得**没必要一直打上i**，
+        #     **lv3 人机没那么喜欢跳**」
         #
-        #   The trap we stepped in: this used to look only at qi/distance/height,
-        #   **never at whether the opponent was airborne** -> 30% chance to fire ↑I even
-        #   with the opponent on the ground.
-        #   And ↑I's hit region is "perpendicular, straight overhead", so firing it at a
-        #   grounded opponent **is a guaranteed whiff** and wastes 100 qi on top.
-        #   Real-machine corroboration: in `fired`, bishaUP shows 28~32 times while the
-        #   anti-air branch's bishaUP count is **0** -- they all came from this
-        #   "fire it on the ground too" branch.
+        #   踩过的坑：原来这里只看 气/距离/高度，
+        #   **完全没看对手在不在空中** -> 对手站地上也 30% 概率放 ↑I。
+        #   而 ↑I 的判定是"垂直在头顶"，对手站地上放**必然空挥**，
+        #   还白花 100 气。
+        #   真机佐证：`fired` 里 bishaUP 有 28~32 次，
+        #   而对空分支的 bishaUP 计数是 **0** —— 全都来自这个"地面也放"的分支。
         _wi_opp_air = bool(getattr(opp, "in_air", False))
         if qi >= 100.0 and not reserve_qi and _wi_opp_air:
             if dist > self.wi_max_dist:
@@ -815,26 +1100,24 @@ class RulePolicy:
                 self._super_dbg["wi_fired"] += 1
                 return ACTION_INDEX["bishaUP"]
 
-        # 3) **substitution**: slip away when getting hit / when the opponent pressures up
-        #    close (↓+L)
+        # 3) **替身术**：被打中/对手贴身压制时闪开（↓+L）
         if (getattr(me, "hitstun", 0) > 0 or (opp_attacking and dist <= 45.0)) \
                 and self.rng.random() < 0.25:
             return ACTION_INDEX["ghostStep"]
 
-        # 4) **assist**: call it once in a while (free extra output)
+        # 4) **援助**：偶尔叫一次（免费额外输出）
         if self.rng.random() < 0.02:
             return ACTION_INDEX["assist"]
 
-        # 5) **low/high skill moves**: give a few options besides attack,
-        #    otherwise skill1/skill2/zhao2/zhao3 stay at 0 samples forever
+        # 5) **下段/上段技能**：给 attack 之外多几种选择，
+        #    否则 skill1/skill2/zhao2/zhao3 永远 0 样本
         if dist <= self.attack_range and vert_ok and self.rng.random() < 0.10:
             pick = self.rng.choice(["skill1", "skill2", "zhao2", "zhao3"])
             return ACTION_INDEX[pick]
 
-        # ★ be active at match start (user correction: "I don't like idling for a few
-        #   seconds at the start") ★
-        #   During the first `opening_frames` frames of a match: no noop, no waiting in
-        #   place -- actively close in and look for an opening.
+        # ★ 开局积极（用户指正：「不喜欢开局要发呆几秒」）★
+        #   对局刚开始的 `opening_frames` 帧内：不 noop、不原地等，
+        #   主动接近并找机会出招。
         self._frame_i += 1
         if self._frame_i <= self.opening_frames:
             self._opening_dbg["frames"] += 1
@@ -845,127 +1128,108 @@ class RulePolicy:
                     self.key_intent = "dashRight" if gap > 0 else "dashLeft"
                 self.cooldown = 1
                 return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
-            # ★ opponent is guarding -> **do not open** (you get blocked + punished on
-            #   recovery) ★
-            #   Measured: Ichigo form 0 has no ground guard-break move, so attacking deals
-            #   only 5 damage and still gets punished on recovery.
+            # ★ 对手在防御 -> **不起手**（会被放住 + 抓后摇）★
+            #   实测一护 form 0 没有地面破防招，打了只掉 5 血还要被抓后摇。
             if (self.respect_guard
                     and int(getattr(opp, "state", 0)) == 20):
                 self._guard_dbg["held"] += 1
                 self.cooldown = 2
-                # Close in a little to keep the pressure, but **do not attack**; if already
-                # close, hold guard
+                # 贴近一点保持压力，但**不出手**；已经在近处就架防
                 if dist > 55.0:
                     return (ACTION_INDEX["right"] if gap > 0
                             else ACTION_INDEX["left"])
                 return ACTION_INDEX["defend"]
-            # In reach, so attack right away, don't wait
+            # 够得着就直接出招，别等
             if vert_ok:
                 self.cooldown = 2
                 return ACTION_INDEX["attack"]
 
-        # 6) **stand still**: occasionally just stand there so the model learns noop (it
-        #    used to be 0 forever)
-        #    But **not allowed inside the opening window** (that would become "idling at
-        #    match start")
+        # 6) **原地不动**：偶尔站一下，让模型学会 noop（以前恒为 0）
+        #    但**开局窗口内不允许**（那会变成"开局发呆"）
         if self.rng.random() < 0.03:
             return ACTION_INDEX["noop"]
 
-        # In the air: pick an air move by distance
+        # 空中：按距离挑空中招
         if in_air:
             self.cooldown = 3
-            # ★ when facing away from the opponent in the air, **do not attack** (you
-            #   cannot turn in the air, so it whiffs anyway) ★
-            #   User correction: "you keep jumping or attacking in one direction ...
-            #                    you can't turn in the air, but I suggest adding landing
-            #                    detection and then turning"
-            #   This is the stop-loss: if facing away, do not swing at nothing, save the
-            #   action, and let landing detection fix the facing after touchdown.
+            # ★ 空中背对对手时**不要出招**（空中不能转向，打了也是空挥）★
+            #   用户指正：「会一直朝着一个方向跳或者攻击……
+            #             虽然空中不能转向，但是建议加一个落地检测然后再转向」
+            #   这里先止损：背对就不挥空，省下动作、落地后由落地检测纠正朝向。
             if not facing_ok:
                 self._land_dbg["air_attack_blocked_facing"] += 1
                 return ACTION_INDEX["noop"]
-            # **air moves must rotate too**: it used to return airAttack only,
-            # which left airBisha / airSkill at 0 samples and the model can never learn them.
+            # **空中招也要轮换**：以前只返回 airAttack，
+            # 导致 airBisha / airSkill 样本恒为 0，模型永远学不会它们。
             act = pick_by_distance(self.reach, dist, qi=qi, in_air=True)
             if act in ("right", "defend", "left"):
                 self._air_idx = (self._air_idx + 1) % len(AIR_MOVES)
                 act = AIR_MOVES[self._air_idx]
             return ACTION_INDEX.get(act, ACTION_INDEX["airAttack"])
 
-        # ★ **jumping** -- this whole section did not exist before, and it is the root
-        #   cause of "the AI never jumps".
+        # ★ **起跳** —— 这一段以前完全没有，是"AI 永远不会跳"的根因。
         #
-        # User measured feedback: "why don't you jump".
-        # Checking the data confirmed jump / airAttack / airBisha / airSkill were **all 0%**:
-        # `RulePolicy` only handled the "already in the air" branch, **there was no code at
-        # all to make it jump**.
-        # So the demonstration contained not a single jump sample and behaviour cloning
-        # naturally never learned to jump
-        # -- the same class of error as the earlier "can't attack" and "never fires a
-        # special": **an action the demonstration never performs can never be learned.**
+        # 用户实测反馈：「为什么你不会跳」。
+        # 查数据确认 jump / airAttack / airBisha / airSkill **全是 0%**：
+        # `RulePolicy` 里只处理"已经在空中"的分支，**没有任何代码让它起跳**。
+        # 于是示范里一个跳跃样本都没有，行为克隆自然学不会跳
+        # —— 和之前"不会出招""不会放必杀"是同一类错误：
+        # **示范不做的动作，模型永远学不会。**
         #
-        # Two things are added here:
-        #   1. random jumps while brawling (dodge moves + open distance)
-        #   2. occasionally jump in to close from mid range (faster than walking, and more
-        #      like a human would play)
-        # ★ require the facing to be correct before jumping ★
-        #   You cannot turn in the air -> jumping while facing away throws away the whole
-        #   airtime (user correction: "you keep jumping in one direction").
+        # 这里加两条：
+        #   1. 缠斗中随机起跳（躲招 + 拉开距离）
+        #   2. 中距离偶尔跳过去接近（比走过去更快，也更像人打）
+        # ★ 起跳前要求朝向正确 ★
+        #   空中不能转向 -> 背对着跳等于把整个滞空期浪费掉
+        #   （用户指正：「会一直朝着一个方向跳」）。
         if not facing_ok:
             self._land_dbg["jump_blocked_facing"] += 1
             self.cooldown = 2
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
-        # ★ respect the guard in the general case too (user correction) ★
-        #   The opponent is guarding + I am in reach -> attacking deals only 5 damage and
-        #   then I eat the counterattack.
-        #   And the moment he drops it is my chance, so here we **wait a moment**.
-        # Note: this block was moved to the front, so it **cannot use `eff_reach`, which is
-        # defined later** (we stepped on an UnboundLocalError once). A fixed "close-range
-        # punish range" is enough.
+        # ★ 一般情况也尊重防御（用户指正）★
+        #   对手架防 + 我够得着 -> 打上去只掉 5 血，然后被反击。
+        #   而他一旦收招就是我的机会，所以这里**等一下**。
+        # 注意：这块被提到最前面，**不能用后面才定义的 `eff_reach`**
+        # （踩过：UnboundLocalError）。用固定的"近身惩罚范围"即可。
         if (self.respect_guard and int(getattr(opp, "state", 0)) == 20
                 and dist <= self.guard_punish_dist):
             self._guard_dbg["attacked_guard"] += 1
             self.cooldown = 2
-            # Keep the distance (don't hug him and hand him the grab), hold guard and wait
-            # for him to drop it himself
+            # 保持距离（别贴脸送抓），架防等他自己松
             if dist < 40.0:
                 return (ACTION_INDEX["left"] if gap > 0
                         else ACTION_INDEX["right"])
             return ACTION_INDEX["defend"]
 
-        # ★★★ anti-air (↑ series) -- **top priority** ★★★
-        #   User correction: "use **up-u and up-j** more to hit airborne enemies, and mind
-        #   **up-i's hit region**"
+        # ★★★ 对空（↑系）—— **最高优先级** ★★★
+        #   用户指正：「多用**上u上j**来打击空中敌人，注意**上i的判定范围**」
         #
-        #   Measured lesson (`live_antiair.py`, 70 seconds on the real machine):
-        #     the opponent was airborne for 702 frames (17.8%), yet **every internal counter
-        #     in the anti-air branch was 0** -- it had become **dead code**: the previous
-        #     round moved "U opener layering" ahead of the terrain branch, and the U opener's
-        #     `dist<=65 -> attack` swallowed the anti-air situations first.
-        #     Those 55 ↑-series hits actually leaked out of the U opener (chosen by height)
-        #     and the combos, **not** from the anti-air logic.
-        #   => anti-air therefore has to go **at the very front**.
+        #   实测教训（`live_antiair.py`，70 秒真机）：
+        #     对手在空中 702 帧（17.8%），但**对空分支的内部计数全是 0**
+        #     —— 它成了**死代码**：上一轮把"U 起手分层"挪到地形分支之前后，
+        #     U 起手的 `dist<=65 -> attack` 抢先吃掉了对空场景。
+        #     那 55 次 ↑系其实是从 U 起手（按高度选）和连招漏出来的，
+        #     **不是**对空逻辑在起作用。
+        #   => 所以对空必须放在**最前面**。
         #
-        #   ★ ↑I(bishaUP)'s hit region ★
-        #     `show_hits.py` established: across **all 7 forms** of Ichigo there are only 7
-        #     triggers (attack/attackAIR/bisha/bishaSUPER/catch1/hurt/zhao1), and
-        #     **↑U/↑J/↑I/↓U/↓J are not in the captured data at all** -- their 12/10/10 reaches
-        #     in the policy table are **fallback defaults, not real values**.
-        #     The user specifically warned about ↑I's hit region => handle it conservatively:
-        #     **only use it within 35**.
+        #   ★ ↑I(bishaUP) 的判定范围 ★
+        #     `show_hits.py` 查明：一护**全部 7 个形态**的 trigger 只有 7 个
+        #     （attack/attackAIR/bisha/bishaSUPER/catch1/hurt/zhao1），
+        #     **↑U/↑J/↑I/↓U/↓J 都不在抓取到的数据里** ——
+        #     策略表里它们的射程 12/10/10 是**兜底默认值，不是真实值**。
+        #     用户特意提醒注意 ↑I 的判定 => 保守处理：**只在 35 以内用**。
         _opp_air = bool(getattr(opp, "in_air", False))
         if self.antiair and _opp_air and dist <= self.overhead_dist:
             self._antiair_dbg["overhead"] += 1
             self._round4_dbg["antiair_any"] += 1
             self.cooldown = 2
-            # ★ ↑I(bishaUP, what the user calls wi) only straight overhead ★
-            #   User correction: "**up-i missed every time** -- this range is **perpendicular,
-            #   straight overhead**"
-            #   The criterion **separates horizontal and vertical**:
-            #     * almost horizontally aligned (`abs(gap) <= u_i_dx`, default 18)
-            #     * and the opponent really is above (`dy_now < -overhead_dy`)
-            #   The old `dist <= 35` (circular) also counted "30px off to the side"
-            #   -> a guaranteed whiff.
+            # ★ ↑I(bishaUP，用户说的 wi) 只在**正头顶**放 ★
+            #   用户指正：「**上i一次没中** 这个范围是**垂直于头顶**的啊」
+            #   判据是**横纵分离**的：
+            #     * 水平几乎对齐（`abs(gap) <= u_i_dx`，默认 18）
+            #     * 且对手确实在上方（`dy_now < -overhead_dy`）
+            #   原来用 `dist <= 35`（圆形）会把"横向偏 30px"的情况也算进来
+            #   -> 必然空挥。
             _gap_abs = abs(gap)
             self._ui_dbg["tried"] += 1
             if (float(getattr(me, "mp", 0.0)) >= 100.0
@@ -978,23 +1242,20 @@ class RulePolicy:
             if _gap_abs > self.u_i_dx:
                 self._ui_dbg["rejected_dx"] += 1
             if dist <= 35.0:
-                # Very close: ↑J(wj) opens fast
+                # 很近：↑J(wj) 起手快
                 self._antiair_dbg["skill2"] += 1
                 return ACTION_INDEX["skill2"]
-            # A bit farther: ↑U(wu) is the main anti-air (it hits upward, so it reaches an
-            # airborne opponent)
+            # 稍远：↑U(wu) 是主力对空（判定往上，对手在空中就够得着）
             self._antiair_dbg["zhao3"] += 1
             return ACTION_INDEX["zhao3"]
 
 
-        # ★ fewer jumps + **follow the opponent** ★
-        #   User correction: "you jump too much, and most of the damage is taken by su
-        #   while jumping"
-        #                    "I **don't jump much because the lv3 bot doesn't jump much**"
-        #   => the jump rate follows **the opponent's airtime ratio**:
-        #      opponent doesn't jump -> I barely jump; opponent jumps a lot -> I follow and
-        #      jump (chase).
-        # (the airtime EMA is updated at the top of act(), see `_opp_air_ema`)
+        # ★ 跳跃减少 + **跟随对手** ★
+        #   用户指正：「跳太多，且大部分伤害是跳跃时被 su 打的」
+        #             「我**不怎么跳是因为 lv3 的人机不怎么跳**」
+        #   => 跳跃频率跟着**对手的滞空比例**走：
+        #      对手不跳 -> 我几乎不跳；对手爱跳 -> 我才跟着跳（追击）。
+        # （滞空比例 EMA 在 act() 开头更新，见 `_opp_air_ema`）
         _rate = self._opp_air_ema
         _scale = max(0.15, min(1.0, _rate / 0.20))
         _chance = self._jump_base * _scale
@@ -1002,55 +1263,52 @@ class RulePolicy:
             self.cooldown = 2
             return ACTION_INDEX["jump"]
 
-        # ★★ chase: opponent airborne + in reach -> **jump up and hit him** ★★
-        #   User correction (2026-10-15): "it's not about blindly raising the frequency, it's
-        #   this chase logic, and jumping matters in it".
-        #   `RulePolicy` used to have **no such branch at all** -- when the opponent jumped it
-        #   only picked moves by distance / threw sword qi, so it just waited below or swung
-        #   at nothing.
-        #   `combo_policy.py` has this branch (measured 97% attack rate while airborne), so
-        #   it is filled in here.
+        # ★★ 追击：对手滞空 + 够得着 -> **跳上去打** ★★
+        #   用户指正（2026-10-15）：「并不是硬增加频率，是追击这个逻辑，
+        #   其中跳跃很重要」。
+        #   原来 `RulePolicy` **完全没有这一条** —— 对手跳起来时只会
+        #   按距离选招/放剑气，于是在下面干等或空挥。
+        #   `combo_policy.py` 里有这条（实测滞空时出招率 97%），这里补齐。
         #
-        #   The criterion uses the bridge's `isInAir` (see `read_bridge._as_in_air`) --
-        #   **do not** use y<0, the bridge's y is a screen coordinate.
+        #   判据用桥接的 `isInAir`（见 `read_bridge._as_in_air`）——
+        #   **不要**用 y<0，桥接 y 是屏幕坐标。
         opp_in_air = bool(getattr(opp, "in_air", False))
-        # The chase jump also requires the correct facing (otherwise you jump over facing away)
+        # 追空跳同样要求朝向正确（否则跳过去也是背对）
         if opp_in_air and dist <= self.chase_dist and not facing_ok:
             self._land_dbg["jump_blocked_facing"] += 1
             self.cooldown = 2
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
-        # ★★ chase jump: **only jump when roughly at the same height** (user correction 2026-10-15) ★★
-        #   The user's exact words: "have you noticed that most of the damage you take is
-        #   **su while jumping**, because your hit rate in the air is very low"
+        # ★★ 追击跳：**只在同高度附近才跳**（用户指正 2026-10-15）★★
+        #   用户原话：「你有没有发现你收到的大部分伤害都是**跳跃时被敌人 su 打的**，
+        #              因为你在空中的命中率很低」
         #
-        #   Measured localisation:
-        #     real machine: jumps are 22.4% (the highest of any state);
-        #     static sampling "opponent airborne + distance 60~120" -> **jump 95.5%**
-        #     => the jumps come almost entirely from the "chase jump".
+        #   实测定位：
+        #     真机跳占 22.4%（全状态最高）；
+        #     静态采样「对手滞空 + 距离 60~120」-> **jump 95.5%**
+        #     => 跳跃几乎全来自"追击跳"。
         #
-        #   Why we get hit: `su` = ↓+U(`zhao2`) **strikes downward**.
-        #     When I jump up under the opponent I am exactly the best target for his ↓U
-        #     => when he is higher than me, "jump up and chase" is **suicide**.
+        #   为什么被打：`su` = ↓+U(`zhao2`) **是往下打的**。
+        #     我向上跳到对手身下时，正是他 ↓U 的最佳靶子
+        #     => 对方比我高时"跳上去追"是**自杀**。
         #
-        #   The fix: add two conditions --
-        #     1. **the opponent is not above my head** (dy_now > -overhead_dy):
-        #        when he is clearly higher, do not jump up (leave it to the anti-air branch
-        #        above; if out of reach, wait below for him to land)
-        #     2. closer distance (chase_dist * 0.45) -- jumping from too far is a whiff anyway
+        #   修法：加两个条件 ——
+        #     1. **对手不在我头顶**（dy_now > -overhead_dy）：
+        #        他明显比我高时不跳上去（改由上面的对空分支处理，
+        #        够不着就在下面等落地）
+        #     2. 距离更近（chase_dist * 0.45）—— 太远跳过去也是空挥
         opp_above = dy_now < -self.overhead_dy
         if opp_in_air and not opp_above and dist <= self.chase_dist * 0.45:
             self._chase_dbg["chase_jump"] += 1
             self.cooldown = 3
             return ACTION_INDEX["jump"]
 
-        # The opponent is over my head but outside anti-air range -> **wait below** (don't
-        # jump, don't charge blindly)
-        #   Wait for him to come down and then hit him; jumping up only eats his ↓U.
+        # 对手在我头顶但超出对空范围 -> **在下面等**（别跳、别乱冲）
+        #   等他落下来再打；跳上去只会吃他的 ↓U。
         if opp_in_air and opp_above and dist > self.overhead_dist:
             self._chase_dbg["wait_below_air"] = (
                 self._chase_dbg.get("wait_below_air", 0) + 1)
             self.cooldown = 3
-            # Stay roughly under the opponent (fine-tune left/right to align), don't jump
+            # 保持在对手正下方附近（左右微调对齐），不跳
             if abs(gap) > 40.0:
                 return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
             return ACTION_INDEX["defend"]
@@ -1060,104 +1318,101 @@ class RulePolicy:
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
 
-        # Facing away: turn around first (**no longer restricted to close range**)
-        #   It used to be `and dist <= self.attack_range`, so with "facing away + far away"
-        #   it did not turn, and kept doing other things (even jumping again) --
-        #   while facing away every move is a whiff anyway.
+        # 背对着：先转身（**不再限制在近距离**）
+        #   原来写 `and dist <= self.attack_range`，于是"背对 + 距离远"时
+        #   不转身，而是继续做别的事（甚至再跳一次）——
+        #   而背对时无论出什么招都是空挥。
         if not facing_ok:
             self._land_dbg["turned"] += 1
             self.cooldown = 2
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
-        # **attack as soon as you are in reach**, no cooldown any more.
+        # **进入射程就出招**，不再用冷却。
         #
-        # Measured lesson (user observation + offline verification):
-        #   "he doesn't really read the opponent's position, he just holds a until he is in
-        #    front of him"
-        #   Sweeping the dx dimension confirmed that the model only learned dx's **sign**,
-        #   not its magnitude:
+        # 实测教训（用户观察 + 离线验证）：
+        #   「他几乎不是读取对面位置的，他是一直 a 到对面面前的」
+        #   扫 dx 维度验证发现，模型只学了 dx 的**符号**，没学大小：
         #       dx=-0.5/-1.0/-2.0 -> left 100%
         #       dx=+0.5/+1.0/+2.0 -> right 100%
-        #   And around dx≈0 the output mixes noop/right -- **there is no "should attack"
-        #   reaction**.
+        #   而且 dx≈0 时输出 noop/right 混杂 ——**没有"该出招"的反应**。
         #
-        #   The root cause is in the data: the old 4~6 frame cooldown made noop 45% and
-        #   attacks only about 5% in total. "In reach" is a narrow slice of the distance
-        #   distribution, so the model saw far too few "should attack" samples to learn the
-        #   threshold.
+        #   根因在数据：原来冷却 4~6 帧，导致 noop 占 45%，
+        #   攻击类合计只占约 5%。"进入射程"是距离分布里很窄的一段，
+        #   模型见过的"该出招"样本太少，学不出这个阈值。
         #
-        #   So here there is **no cooldown**: attack whenever in reach.
-        #   In the real game presses during an attack animation do not register anyway (the
-        #   game gates it itself), so I don't need to add cooldown.
-        # ★ **close in on purpose at long range** ★
+        #   所以这里**不设冷却**：只要够得着就出招。
+        #   真实游戏里出招动画期间按键本来就不生效（游戏自己 gate），
+        #   不需要我再加冷却。
+        # ★ **远距离主动贴身** ★
         #
-        # The previous A/B experiment found: when `catch1` (the dash move) was treated as an
-        # option at long range, the AI picked it at random from far away -> **charged
-        # straight in**, net damage -796 on the real machine;
-        # after "fixing" its reach to close range, the AI instead **stood at range throwing
-        # sword qi forever**, and net damage dropped to -1083.
-        # => **standing and trading projectiles does not win the damage exchange** (the
-        # hell-difficulty bot pressures very hard).
+        # 上轮的 A/B 实验发现：`catch1`（突进招）被当成远距离可选招时，
+        # AI 会在远处随机选它 -> **冲上去打**，真机净伤害 -796；
+        # 把它的射程"修对"成近身之后，AI 就**站在远处一直放剑气**，
+        # 净伤害反而掉到 -1083。
+        # => **站着对射赢不了伤害交换**（地狱人机压制力很强）。
         #
-        # So an explicit rule is added here: at long range, walk towards the opponent with a
-        # fairly high probability instead of mindlessly throwing sword qi.
-        # (I once added "prefer light attack up close" here, **measured harmful, reverted**:
-        #   60-second collection reward 169.3 -> **+23.1**; and `attack`'s hitx is only 6, so
-        #   it practically requires being face to face, and its share only moved slightly
-        #   from 2.8%.
-        #   More importantly: standing face to face hands the fight to a bot that is better
-        #   at close range.)
-        # ★★ terrain height: level out first when not on the same level, don't whiff from
-        #    below ★★
-        #   Measured rationale in HANDOFF section P / the comment in __init__.
-        #   It has to go before "pick a move by distance", otherwise a move that cannot reach
-        #   gets picked first.
+        # 所以这里显式加一条：距离远时以较高概率主动朝对手走，
+        # 而不是无脑放剑气。
+        # （曾在此加过"贴身优先普攻(attack)"，**实测有害已回退**：
+        #   60 秒采集奖励 169.3 -> **+23.1**；而且 `attack` 的 hitx 只有 6，
+        #   几乎必须完全贴脸，占比只从 2.8% 动了一点点。
+        #   更重要的是：站到贴身等于把战场交给更擅长近身的人机。）
+        # ★★ 地形差：不在同一层就先拉平，别在下面空挥 ★★
+        #   实测依据见 HANDOFF P 节 / __init__ 里的注释。
+        #   必须放在"按距离选招"之前，否则会先挑一个够不着的招。
         #
-        #   Last round I blamed "can't hit" on the key method / hold vs tap, but the real
-        #   cause was **vertical distance**: hity is only 0~10 while the drop is 78.
-        # ★ I am up high and the opponent is low -> **come down** ★
-        #   User correction: "after jumping onto the high platform he generally doesn't like
-        #   coming down"
-        #   Standing on the platform unable to reach the opponent below is handing over the
-        #   initiative.
+        #   曾经我（上一轮）把"打不中"归因于按键方法 / 长按 vs tap，
+        #   真正原因是**垂直距离**：hity 只有 0~10，而落差 78。
+        # ★ 自己在高处、对手在低处 -> **下来** ★
+        #   用户指正：「跳上高台一般不喜欢下来」
+        #   站在高台上够不着下面的对手，等于把主动权让出去。
         if (getattr(me, "y", 0.0) < 520.0 and getattr(opp, "y", 0.0) > 540.0):
             self.cooldown = 2
-            # Walk out towards the opponent (stepping off the platform edge drops you
-            # naturally)
+            # 朝对手方向走出去（走出平台边缘会自然落下）
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
-        # ★★ anti-air: opponent straight overhead + horizontally close enough -> hit upward
-        #    with the ↑ series ★★
-        #   User correction (2026-10-15):
-        #     "against an enemy jumping straight overhead you can try wu more,
-        #      and wj if the distance is close"
-        #   The ↑-series moves (zhao3=↑U / skill2=↑J / bishaUP=↑I) strike upward by design,
-        #   so when the opponent jumps over your head **hitting straight up** is faster and
-        #   more reliable than "jump up and chase"
-        #   (the chase jump has to wait for you to get airborne and can be countered).
-        #   It must go **before** the terrain branch -- the terrain branch assumes "only the
-        #   same level needs levelling out", and when the opponent is overhead you should not
-        #   jump first.
-        # ★★ J string into the U series (the combo the user suggested) ★★
-        #   "you could try a j string and then chain into the u series like that"
-        #   Criterion: the opponent is in **hitstun** (HURT_ING=21) -- meaning my move just
-        #   connected, and chaining into the U series here is the best value (much higher
-        #   damage: zhao1 = 220, J is only 40).
+        # ★★ 对空：对手在正头顶 + 水平够近 -> 用 ↑系招打上去 ★★
+        #   用户指正（2026-10-15）：
+        #     「打位于正头顶跳跃的敌人的可以多试试 wu，
+        #       距离近的话可以试试 wj」
+        #   ↑系招式（zhao3=↑U / skill2=↑J / bishaUP=↑I）本来就是往上打的，
+        #   对手从头顶跳过时**直接打上去**比"跳上去追"更快也更稳
+        #   （追跳要等自己升空，还可能被反打）。
+        #   必须放在地形分支**之前** —— 地形分支的前提是"同一层才需要拉平"，
+        #   对手在头顶时不该先跳。
+        # ★★ 对手倒地/起身 -> ↓U 追击（用户指正 2026-10-17：「下U 打倒地」）★★
+        #   为什么要有：倒地那几帧是**最安全的输出窗口**，而 ↓U 是往下打的，
+        #   正好压在地上的人。原来规则没有这条，所以 `zhao2` 只占标签的 1.2%
+        #   （它只在"对手比我低 10px 以上"时才被选到，而真机几乎都在同一层）。
+        #   ★ 状态码 23/24 = 倒地/起身（见 docs/BRIDGE.md 与 HANDOFF 的实测表）★
+        #   ★ 必须放在 combo_u 之前：倒地时对手 state 是 23/24，不会同时是 21，
+        #     但后面 u_opener 的距离分层会用 `state != 21` 过滤，插在这里最稳。★
+        if (int(getattr(opp, "state", 0)) in (23, 24)
+                and dist <= 90.0
+                and not bool(getattr(me, "in_air", False))):
+            self._round4_dbg["down_u"] = self._round4_dbg.get("down_u", 0) + 1
+            self.cooldown = 2
+            return ACTION_INDEX["zhao2"]          # 下U
+
+        # ★★ J 一套接 U 系列（用户建议的连招）★★
+        #   「你可以试试 j 一套然后接 u 系列这样连招」
+        #   判据：对手处于**受击硬直**（HURT_ING=21）—— 说明我的招刚打中，
+        #         此时接 U 系（伤害高得多：zhao1 = 220，J 只有 40）最划算。
         if (int(getattr(opp, "state", 0)) == 21 and vert_ok
                 and dist <= 78.0):
             self._round4_dbg["combo_u"] += 1
             self.cooldown = 3
-            # Pick by height: ↑U if he is above, ↓U if below, U if on the same level
-            if dy_now < -10.0:
+            # 按高度选：他在空中/上方用 ↑U，下方用 ↓U，同层用平 U
+            # ★ 用户指正 2026-10-17：「上U 对空」—— 对手起跳时哪怕 dy 不大也该用 ↑U ★
+            if bool(getattr(opp, "in_air", False)) or dy_now < -6.0:
                 return ACTION_INDEX["zhao3"]
-            if dy_now > 10.0:
+            if dy_now > 6.0:
                 return ACTION_INDEX["zhao2"]
             return ACTION_INDEX["zhao1"]
 
-        # ★ the opponent is airborne and **attacking** and close enough -> hold guard (user
-        #   correction: "still ate a few of the enemy's air attacks") ★
-        #   When his air move comes down, trading with anti-air mostly loses; block it, wait
-        #   for him to land, then counterattack.
+        # ★ 对手在空中**正在出招**且够近 -> 架防御（用户指正：
+        #   「还是吃了几次敌人的空中攻击」）★
+        #   他空中招打下来时，我硬对对空招多半要吃亏；防住等他落地再反击。
         _ost_now = int(getattr(opp, "state", 0))
         if (bool(getattr(opp, "in_air", False))
                 and _ost_now in (10, 11, 12, 13)
@@ -1169,14 +1424,16 @@ class RulePolicy:
                         else ACTION_INDEX["left"])
             return ACTION_INDEX["defend"]
 
-        # ★ loosened: when the opponent is **airborne** and horizontally close enough, use
-        #   the ↑ series regardless of height ★
-        #   User correction: "up-u is rare, up-j happened once" -- it used to require
-        #   dy < -12 and dist <= 70, and in real play the opponent's jump arc rarely lands
-        #   exactly inside that window.
+        # ★ 放宽：对手**在空中**且水平够近时，无论高度都用 ↑ 系 ★
+        #   用户指正：「上u很少上j就一次」—— 原来要求 dy < -12 且 dist <= 70，
+        #   实战里对手的跳跃弧线很少正好落进这个窗口。
         opp_in_air_now = bool(getattr(opp, "in_air", False))
+        # ★ 用户指正 2026-10-17：「上U 对空」★
+        #   原来要求"对手比我高 8px 以上"**或**"在空中且比我高"，
+        #   于是对手刚起跳（dy 还不大）时根本进不来 —— 实测 zhao3 只占 0.84%。
+        #   现在：只要对手**在空中**且不是明显在我下方（dy > -30），就用 ↑ 系。
         antiair_ok = ((dy_now < -self.overhead_dy
-                       or (opp_in_air_now and dy_now < 0))
+                       or (opp_in_air_now and dy_now > -30.0))
                       and dist <= self.overhead_dist)
         if self.antiair and antiair_ok:
             self._antiair_dbg["overhead"] += 1
@@ -1184,44 +1441,42 @@ class RulePolicy:
                 self._round4_dbg["antiair_any"] += 1
             self.cooldown = 3
             qi_now = float(getattr(me, "mp", 0.0))
-            # Close range: ↑J (wj) opens fast, good for follow-ups
+            # 近距离：↑J（wj）起手快，方便接后续
             if dist <= 35.0:
                 self._antiair_dbg["skill2"] += 1
                 return ACTION_INDEX["skill2"]
-            # Mid range: ↑U (wu) -- the anti-air move the user named
+            # 中距离：↑U（wu）—— 用户点名的对空招
             if self.rng.random() < 0.75:
                 self._antiair_dbg["zhao3"] += 1
                 return ACTION_INDEX["zhao3"]
-            # Occasionally add ↑I (wi) (only with qi)
+            # 偶尔用 ↑I（wi）补充（有气才放）
             if qi_now >= 100.0:
                 self._antiair_dbg["bishaUP"] += 1
                 return ACTION_INDEX["bishaUP"]
             self._antiair_dbg["zhao3"] += 1
             return ACTION_INDEX["zhao3"]
 
-        # ★★ distance layering for the U opener (user correction, round five) ★★
-        #   "u trades with the enemy's u, so **opening from a bit farther is still good**,
-        #    including up-u and down-u"
-        #   "**using u as an opener easily gets blocked and then punished on recovery**"
-        #   => at a bit of distance (u_open_min ~ u_open_max) open with U (it can trade and
-        #      cancel out); up close (<= u_open_min) **do not open with U**, leave it to J
-        #      (fast, and less punishable when blocked).
-        #   ★ Note: chaining U while the opponent is in **hitstun** is a different branch
-        #     (combo_u) and is not restricted here ★
+        # ★★ U 起手的距离分层（用户第五轮指正）★★
+        #   「u 能和敌人的 u 抵消，所以**稍微远一点起手还是不错**，包括上u下u」
+        #   「**u 拿来起手很容易被放住还被抓后摇**」
+        #   => 稍远（u_open_min ~ u_open_max）用 U 起手（能对拼抵消）；
+        #      近身（<= u_open_min）**不用 U 起手**，交给 J（快、被防住也不容易被抓）。
+        #   ★ 注意：对手**受击硬直**时接 U 是另一条（combo_u），不受这里限制 ★
         if (self.u_open_min < dist <= self.u_open_max
                 and abs(dy_now) <= self.u_open_dy
                 and int(getattr(opp, "state", 0)) != 21):
             self._u_zone_dbg["u_opener"] += 1
             self.cooldown = 3
-            # up-u / down-u / level-u picked by height
-            if dy_now < -self.overhead_dy:
-                return ACTION_INDEX["zhao3"]      # up-u
-            if dy_now > self.overhead_dy:
-                return ACTION_INDEX["zhao2"]      # down-u
-            return ACTION_INDEX["zhao1"]          # level u
+            # 上u / 下u / 平u 按高度选
+            # ★ 用户指正 2026-10-17：上U 对空、下U 打倒地 ★
+            #   阈值从 8px 收到 6px，且"对手在空中"直接用 ↑U。
+            if bool(getattr(opp, "in_air", False)) or dy_now < -6.0:
+                return ACTION_INDEX["zhao3"]      # 上u
+            if dy_now > 6.0:
+                return ACTION_INDEX["zhao2"]      # 下u
+            return ACTION_INDEX["zhao1"]          # 平u
         if dist <= self.u_open_min and vert_ok:
-            # Close range: J first (do not open with U -- it gets blocked and punished on
-            # recovery)
+            # 近身：先 J（不用 U 起手 —— 会被防住并抓后摇）
             self._u_zone_dbg["close_j"] += 1
             self.cooldown = 2
             return ACTION_INDEX["attack"]
@@ -1234,7 +1489,7 @@ class RulePolicy:
                 self._terrain_dbg["level_gap"] += 1
                 if dist > 60.0:
                     self._terrain_dbg["walk_to_level"] += 1
-                    # Levelling out at long range also uses dash for speed
+                    # 远距离拉平也用 dash 加速
                     if dist > self.eff_range * 2 and self._dash_left <= 0:
                         self._engage_dbg["dash_approach"] += 1
                         self._dash_left = self.dash_cd
@@ -1252,27 +1507,25 @@ class RulePolicy:
                     self._terrain_dbg["wait_below"] += 1
                     self.cooldown = 6
                     return ACTION_INDEX["defend"]
-                # The drop is more than one jump can cover: look for a way around towards
-                # the opponent
+                # 落差超过一跳能及：朝对手方向找路
                 self._terrain_dbg["walk_to_level"] += 1
                 self.cooldown = 2
                 return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
-        # ★ long range: **stop charging in unconditionally** ★ (user correction 2026-10-15)
-        #   This used to be a 75% chance to return right/left -- walking straight in and
-        #   running right into the opponent's ranged moves.
-        #   Now: if he is hittable, **stand and suppress with sword qi** (draining his qi,
-        #   see the measured mechanic in the zhao1 comment below), and only move forward when
-        #   he is genuinely out of reach (beyond sword-qi range).
+        # ★ 远距离：**别再无条件往里冲** ★（用户指正 2026-10-15）
+        #   原来这里是 75% 直接 return right/left —— 一路往前送，
+        #   正好撞进对手的远程招。
+        #   现在：能打到就**站住用剑气压制**（磨它的气，
+        #   见下面 zhao1 那段注释里实测过的机制），
+        #   只有真的够不着（超过剑气射程）才前移。
         if dist > self.approach_dist:
             zhao1_reach = self.reach.get("zhao1", 30.0)
-            # Sword qi reaches -> hold position and fire (no advancing), keeping a chance to
-            # defend
+            # 剑气够得着 -> 站住放（不前进），并留一点防御机会
             if dist <= zhao1_reach and self.rng.random() < 0.75:
                 self.cooldown = 4
                 return ACTION_INDEX["zhao1"]
-            # Out of reach -> advance. ★ prefer dash at long range (3.2x walking speed) ★
-            #   User correction "you have never used L" + "rarely close in".
+            # 够不着 -> 前进。★ 远距离优先用 dash（3.2 倍走路速度）★
+            #   用户指正「你从没用过 L」+「很少贴近」。
             if dist > self.eff_range * 2 and self._dash_left <= 0:
                 self._engage_dbg["dash_approach"] += 1
                 self._dash_left = self.dash_cd
@@ -1283,35 +1536,28 @@ class RulePolicy:
                 self._engage_dbg["walk_approach"] += 1
                 return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
-        # (I once added "chase immediately when the opponent is in hitstun (combo)" here,
-        #    **measured harmful, reverted**:
-        #    measured with the low-variance collection reward, the lv3 baseline was
-        #    179.5 ± 15.3 while the combo version scored only 132.9 and 147.4 -- 2~3 standard
-        #    deviations low, a real regression.
-        #    Possible reason: the hitstun window is too short, and grabbing it squeezed out
-        #    more effective positioning/qi building.
-        #    Lesson: **keep only changes that measurement has validated.**)
-        # (I once added "focus output when the bot's qi is low" here, **measured harmful,
-        #    reverted**: 3 episodes scored +57.2/+52.8/+51.7, mean 53.9, 115 below the 169.3
-        #    baseline -- but it was active at the same time as the "new defence", see the
-        #    analysis in the defence section below.)
-        # ★ the dash move is only used a bit closer in ★ (user correction 2026-10-15)
-        #   `catch1` **lunges forward**; picking it at long range means "delivering yourself
-        #   into the opponent's ranged move".
-        #   Lower its reach temporarily -> pick_by_distance picks zhao1 instead (fires from a
-        #   standstill, reach 305).
-        #   ★ close range is unchanged (the table is untouched when dist <= dash_max_dist) ★,
-        #     so the point-blank combos (J / ↓U / ↑U / ↓J / ↑J) are completely unaffected.
+        # （曾在此加过"对手受击硬直时立刻追击（连段）"，**实测有害已回退**：
+        #   用低方差的采集奖励测，lv3 基线 179.5 ± 15.3，
+        #   连段版两次分别只有 132.9 和 147.4 —— 低 2~3 个标准差，是真实退化。
+        #   可能原因：硬直窗口太短，抢这一下反而挤掉了更有效的走位/蓄气。
+        #   教训：**只留经测量验证有效的改动。**）
+        # （曾在此加过"人机气低时集中输出"，**实测有害已回退**：
+        #   3 集奖励 +57.2/+52.8/+51.7，均值 53.9，比基线 169.3 低 115
+        #   —— 但它和"新防御"是同时生效的，见下面防御那段的分析。）
+        # ★ 突进招只在近一点的距离用 ★（用户指正 2026-10-15）
+        #   `catch1` 会**往前冲刺**；在远距离选它等于"主动送进对手的远程招"。
+        #   把它的射程临时压低 -> pick_by_distance 改选 zhao1（站住打，射程 305）。
+        #   ★ 近身照旧（dist <= dash_max_dist 时表不变）★，
+        #     所以贴身连段（J / ↓U / ↑U / ↓J / ↑J）完全不受影响。
         eff_reach = self.reach
         if dist > self.dash_max_dist and "catch1" in self.reach:
             eff_reach = dict(self.reach)
-            eff_reach["catch1"] = self.dash_max_dist * 0.5   # lower it = exclude it from the candidates
+            eff_reach["catch1"] = self.dash_max_dist * 0.5   # 压低 = 排除出候选
         elif dist > self.keep_away_dist and "catch2" in self.reach:
             eff_reach = dict(self.reach)
             eff_reach["catch2"] = self.dash_max_dist * 0.5
-        # ★ vertical does not line up -> **do not attack**, level the height first ★
-        #   (the terrain branch handles |dy|>terrain_tol; here the stricter vert_tol catches
-        #    it once more)
+        # ★ 垂直没对上 -> **不发招**，先拉平高度 ★
+        #   （地形分支处理 |dy|>terrain_tol；这里用更严的 vert_tol 再兜一次）
         if not vert_ok:
             self._engage_dbg["blocked_vert"] += 1
             if dy_now < 0:
@@ -1319,46 +1565,39 @@ class RulePolicy:
                 return ACTION_INDEX["jump"]
             self.cooldown = 4
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
-        # ★ horizontally beyond the effective distance -> close in first (with dash), don't
-        #   swing at nothing ★
-        #   Measured: same level dx 80-120 hit rate 0/11; dx 15-50 has 50%
+        # ★ 水平超出有效距离 -> 先接近（用 dash），别空挥 ★
+        #   实测：同层 dx 80-120 命中率 0/11；dx 15-50 有 50%
         if dist > self.eff_range and self._dash_left <= 0:
             self._engage_dbg["dash_approach"] += 1
             self._dash_left = self.dash_cd
             self.key_intent = "dashRight" if gap > 0 else "dashLeft"
             self.cooldown = 2
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
-        # ★ while saving qi: pass qi as 0 -> pick_by_distance only picks "qi-free" moves ★
-        #   (in `pick_by_distance`, `surplus = qi >= 200` picks bisha(100 qi), which would
-        #     spend the qi as soon as it hits 200, so **Bankai's required 300 is never
-        #     reached**. Measured: when only bishaSUPER/bishaUP were blocked, the maximum qi
-        #     still stalled at ~212.)
+        # ★ 攒气期间：把 qi 传 0 -> pick_by_distance 只挑"不耗气"的招 ★
+        #   （`pick_by_distance` 里 `surplus = qi >= 200` 会挑 bisha(100气)，
+        #     那样气到 200 就被花掉，**永远攒不到万解需要的 300**。
+        #     实测：只挡 bishaSUPER/bishaUP 时，最大 qi 仍停在 ~212。）
         qi_for_pick = 0.0 if reserve_qi else qi
         act = pick_by_distance(eff_reach, dist, qi=qi_for_pick, in_air=False)
-        # ★ `bishaUP`(↑I) is an **↑-series** move: it cannot hit a grounded opponent (its hit
-        #   region is overhead) ★
-        #   User correction: "no need to keep firing up-i, the lv3 bot doesn't like jumping
-        #   that much".
+        # ★ `bishaUP`(↑I) 是 **↑ 系**：对手站地上时打不到（判定在头顶）★
+        #   用户指正：「没必要一直打上i, lv3 人机没那么喜欢跳」。
         if act == "bishaUP" and not bool(getattr(opp, "in_air", False)):
             self._super_dbg["wi_ground_swapped"] = (
                 self._super_dbg.get("wi_ground_swapped", 0) + 1)
-            act = "zhao1"      # swap to the level U series (also 0 qi, and it can hit a grounded opponent)
-        # ★ why zhao1 (sword qi) has to stay ★
+            act = "zhao1"      # 换成平系 U（同样耗 0 气、能打到地面的人）
+        # ★ 关于 zhao1（剑气）为什么要留着 ★
         #
-        # I once thought "sword qi gets blocked 90% of the time so it is a dead move" and cut
-        # its share from 26% to 13%.
-        # **Measured harmful**: the reward collapsed from 169.3 to +23.1.
+        # 我一度以为"剑气被 90% 格挡所以是废招"，把它的占比从 26% 压到 13%。
+        # **实测有害**：奖励从 169.3 塌到 +23.1。
         #
-        # The real mechanic: **getting blocked = draining the bot's energy**.
-        #   Measured: ten seconds of continuous zhao1 -> bot energy 80.7 -> 56.0 (a drop of
-        #   24.7); and the bot's source has
-        #   `if(_fighter.energy < 20) { defense = false; return; }`
-        #   -- **once its qi is drained it can no longer block**.
-        # So long-range sword-qi pressure is a way to **grind down its defensive resource**,
-        # not a dead move.
-        # Do not cut it again just because "it gets blocked".
+        # 真正机制：**被挡 = 在消耗人机的 energy**。
+        #   实测连续 zhao1 十秒 -> 人机 energy 80.7 -> 56.0（掉 24.7）；
+        #   而人机源码 `if(_fighter.energy < 20) { defense = false; return; }`
+        #   —— **气打空它就挡不住了**。
+        # 所以远程剑气压制是"磨掉它防御资源"的手段，不是废招。
+        # 别再因为"被挡"就把它砍掉。
         if act in ("right", "left"):
-            # Out of reach -> advance; if low on HP and being pressured, defend a moment
+            # 够不着 -> 前进；血少且被压制时防御一下
             if opp.hp > me.hp + 200 and self.rng.random() < 0.15:
                 self.cooldown = 10
                 return ACTION_INDEX["defend"]
@@ -1371,26 +1610,23 @@ class RulePolicy:
 
 
 class SmartPolicy:
-    """Heuristic policy with an action mask: **guarantees all 13 actions have samples**.
+    """带动作掩码的启发式策略：**保证 13 个动作都有样本**。
 
-    Why it is needed:
-      * `random` covers a lot but most of it is junk actions (mashing directions), and
-        there are too few positive samples
-      * `rule` plays well but its distribution is extreme (measured: `right` is 74%,
-        `airAttack`/`assist` are 0)
-    Behaviour cloning needs "a positive sample for every action", otherwise the model can
-    never learn an action it has not seen.
+    为什么需要它：
+      * `random` 覆盖广但大半是废动作（乱按方向），正样本太少
+      * `rule` 打得好但分布极端（实测 `right` 占 74%，`airAttack`/`assist` 为 0）
+    行为克隆需要"每个动作都有正样本"，否则模型永远学不会没见过的动作。
 
-    How it works:
-      1. use `action_mask` to filter out actions that cannot succeed in the current situation
-      2. sample among the legal actions by weight (attack actions weighted high, forward low)
-      3. periodically jump on purpose + attack in the air, to manufacture `airAttack` samples
-      4. fire specials/supers when there is qi, to manufacture big-move samples
+    做法：
+      1. 用 `action_mask` 过滤掉当前局面下不可能成功的动作
+      2. 在合法动作里按权重采样（攻击类权重高、前进权重低）
+      3. 定期主动跳起来 + 空中攻击，制造 `airAttack` 样本
+      4. 气够就放必杀/超必杀，制造大招样本
     """
 
     name = "smart"
 
-    # Weights: attack actions high, pure movement low (to avoid `right` dominating)
+    # 权重：攻击动作高，纯移动低（避免 right 一家独大）
     WEIGHTS: dict[str, float] = {
         "noop": 0.5,
         "left": 0.6,
@@ -1412,21 +1648,20 @@ class SmartPolicy:
         self.attack_range = attack_range
         self.cooldown = 0
         self._jump_timer = 0
-        self._want_air = 0          # >0 means "I just jumped, I want to attack in the air next"
+        self._want_air = 0          # >0 表示"我刚起跳，接下来要在空中出招"
 
     def act(self, snapshot: Any, frame: Frame) -> int:
         me, opp = frame.p1, frame.p2
         if me.hp <= 0 or opp.hp <= 0:
             return ACTION_INDEX["noop"]
 
-        # ★ airtime criterion: use the bridge's in_air ★
-        #   It used to be `y < -20` -- but the bridge's y is a screen coordinate
-        #   (ground ≈570, smaller is higher), so it is **never negative** and the test was
-        #   always False.
+        # ★ 滞空判据：用桥接的 in_air ★
+        #   原来写的是 `y < -20` —— 但桥接 y 是屏幕坐标
+        #   （地面 ≈570、越小越高），**永远不为负**，所以恒判 False。
         in_air = bool(getattr(me, "in_air", False))
 
-        # Air priority (not limited by cooldown): attack in the air right after jumping,
-        # otherwise the ~1 second of the jump is all noop and airAttack never gets a sample
+        # 空中优先（不受 cooldown 限制）：起跳后马上空中攻击，
+        # 否则跳跃那 1 秒里一直是 noop，airAttack 永远采不到样本
         if in_air:
             self._want_air = 0
             self.cooldown = 4
@@ -1434,8 +1669,7 @@ class SmartPolicy:
 
         if self.cooldown > 0:
             self.cooldown -= 1
-            # The cooldown is basically unused now (attack directly once in reach); this line
-            # is kept only for compatibility with old callers.
+            # 冷却已基本不用（进入射程直接出招），留这条只为兼容旧调用。
             gap_now = opp.x - me.x
             return ACTION_INDEX["right"] if gap_now > 0 else ACTION_INDEX["left"]
 
@@ -1444,7 +1678,7 @@ class SmartPolicy:
         facing_ok = (gap >= 0 and me.facing >= 0) or (gap <= 0 and me.facing <= 0)
         in_range = abs(gap) <= self.attack_range
 
-        # Legal actions (mask)
+        # 合法动作（掩码）
         legal = mask_for(
             qi=qi, in_air=False,
             action_state=getattr(me, "state", 0),
@@ -1452,8 +1686,8 @@ class SmartPolicy:
         )
         names = [ACTIONS[i] for i, ok in enumerate(legal) if ok]
 
-        # Jump on purpose: once every ~110 frames (jump + air attack is about 1 second; too
-        # often pushes airAttack above 10%, too sparse and no sample is collected)
+        # 主动起跳：每 ~110 帧一次（跳跃+空中攻击约 1 秒，
+        # 太频繁会把 airAttack 刷到 10% 以上，太稀疏又采不到）
         self._jump_timer += 1
         if self._jump_timer >= 110 and "jump" in names:
             self._jump_timer = 0
@@ -1462,7 +1696,7 @@ class SmartPolicy:
             return ACTION_INDEX["jump"]
 
         if not in_range:
-            # Far away: mostly close in, occasionally use assist (so assist gets samples)
+            # 距离远：以靠近为主，偶尔用援助（保证 assist 有样本）
             if "assist" in names and self.rng.random() < 0.10:
                 self.cooldown = 12
                 return ACTION_INDEX["assist"]
@@ -1471,7 +1705,7 @@ class SmartPolicy:
         if not facing_ok:
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
-        # Close range: weighted sampling among the legal actions
+        # 近身：在合法动作里加权采样
         weights = [self.WEIGHTS.get(n, 1.0) for n in names]
         choice = self.rng.choices(names, weights=weights, k=1)[0]
         self.cooldown = 4 if choice not in ("noop", "left", "right") else 1
@@ -1479,24 +1713,21 @@ class SmartPolicy:
 
 
 class RotatePolicy:
-    """Rotation policy: **guarantees all 13 actions get at least a minimum of samples**.
+    """轮换策略：**保证 13 个动作都拿到最少样本**。
 
-    Why it needs to exist on its own:
-      Behaviour cloning presupposes "a positive sample for every action". Measured, both
-      heuristic policies have very skewed distributions:
-        `rule`  -> right 74%, airAttack/assist 0
-        `smart` -> right 81%, ghostStep 0
-      because the two characters often cannot reach each other, so most frames are spent
-      "walking towards the opponent".
+    为什么单独要它：
+      行为克隆的前提是"每个动作都有正样本"。实测两条启发式策略的分布都很偏：
+        `rule`  -> right 74%、airAttack/assist 为 0
+        `smart` -> right 81%、ghostStep 为 0
+      因为两个角色经常够不到对方，绝大部分帧都在"走向对手"。
 
-    How it works (no complicated heuristics, just rotation + closing in):
-      1. keep a queue of "actions still to be filled", taking them in turn (fewest samples first)
-      2. when not in attack range, spend a few frames closing in first
-      3. once in range, execute the next action from the queue
-      4. in the air, execute airAttack
-    That way every action appears at a similar frequency and the distribution is close to
-    uniform -- good for BC, and good enough for DQN (DQN will pull it back towards useful
-    actions through the reward).
+    做法（不搞复杂启发式，直接轮换 + 靠近）：
+      1. 维护一个"待补动作"队列，每个动作轮流取（优先补样本少的）
+      2. 不在攻击距离时，先用若干帧靠近
+      3. 进入距离后，执行队列里的下一个动作
+      4. 空中时执行 airAttack
+    这样每个动作都会以相近的频率出现，分布接近均匀 ——
+    对 BC 是好事，对 DQN 也够用（DQN 会靠奖励把它拉回到有用的动作上）。
     """
 
     name = "rotate"
@@ -1512,7 +1743,7 @@ class RotatePolicy:
         self._refill()
 
     def _refill(self) -> None:
-        """Queue the 13 actions by "current sample count, fewest first" (the sparse ones get queued more than once)."""
+        """把 13 个动作按"当前样本数从少到多"排进队列（少的多排几次）。"""
         order = sorted(range(NUM_ACTIONS), key=lambda i: self.counts[i])
         self.queue = list(order) + list(order)
 
@@ -1521,16 +1752,15 @@ class RotatePolicy:
         if me.hp <= 0 or opp.hp <= 0:
             return ACTION_INDEX["noop"]
 
-        # ★ airtime criterion: use the bridge's in_air ★
-        #   It used to be `y < -20` -- but the bridge's y is a screen coordinate
-        #   (ground ≈570, smaller is higher), so it is **never negative** and the test was
-        #   always False.
+        # ★ 滞空判据：用桥接的 in_air ★
+        #   原来写的是 `y < -20` —— 但桥接 y 是屏幕坐标
+        #   （地面 ≈570、越小越高），**永远不为负**，所以恒判 False。
         in_air = bool(getattr(me, "in_air", False))
         if in_air:
-            # Fire only one air move per airtime (otherwise it fires every frame of the whole
-            # airtime, which measured pushed airAttack to 22% and squeezed out other actions).
-            # **Air moves must rotate too**: it used to fire only airAttack, which left
-            # airBisha / airSkill sample counts at 0 forever and the model could never learn them.
+            # 每次滞空只发一次空中招（否则整个滞空期每帧都在发，
+            # 实测会把 airAttack 刷到 22%，挤掉别的动作）。
+            # **空中招也要轮换**：之前只发 airAttack，导致
+            # airBisha / airSkill 的样本数恒为 0，模型永远学不会。
             if not self._air_attacked:
                 self._air_attacked = True
                 self._air_idx = (self._air_idx + 1) % len(AIR_MOVES)
@@ -1554,7 +1784,7 @@ class RotatePolicy:
         facing_ok = (gap >= 0 and me.facing >= 0) or (gap <= 0 and me.facing <= 0)
 
         if not in_range:
-            # Out of reach: close in first; occasionally jump to top up airAttack
+            # 够不到：先靠近；偶尔跳一下去补 airAttack
             self.cooldown = 2
             if self.rng.random() < 0.05:
                 return ACTION_INDEX["jump"]
@@ -1563,8 +1793,7 @@ class RotatePolicy:
         if not facing_ok:
             return ACTION_INDEX["right"] if gap > 0 else ACTION_INDEX["left"]
 
-        # Within attack range: take the next action from the queue (skipping ones illegal in
-        # the current situation)
+        # 在攻击距离内：从队列取下一个动作（跳过当前局面非法的）
         legal = mask_for(
             qi=getattr(me, "mp", 0.0), in_air=False,
             action_state=getattr(me, "state", 0),
@@ -1590,12 +1819,11 @@ POLICIES: dict[str, Callable[..., Policy]] = {
     "rotate": RotatePolicy,
 }
 
-# Air-move rotation table (used by the rotate policy). All three need samples, otherwise the
-# model never learns air specials / air moves.
+# 空中招轮换表（rotate 策略用）。三个都要采到，否则模型学不会空中必杀/跳招。
 AIR_MOVES: tuple[str, ...] = ("airAttack", "airBisha", "airSkill")
 
 
-# ---------------------------------------------------------------- backends
+# ---------------------------------------------------------------- 后端
 
 from backends import (  # noqa: E402
     Backends,
@@ -1606,13 +1834,13 @@ from backends import (  # noqa: E402
 )
 
 
-# ---------------------------------------------------------------- main loop
+# ---------------------------------------------------------------- 主循环
 
 
-# Debug counters for the new defence (module-level, shared so main() can print them)
+# 新防御的调试计数（模块级共享，便于 main() 打印）
 _DEF_DBG: dict = {}
 
-# DAgger: drive the match with the model, label it with rule (see --dagger-onnx)
+# DAgger：用模型驱动对局、用 rule 给标签（见 --dagger-onnx）
 _DAGGER_SESS = None
 _DAGGER_NAME = None
 _DAGGER_TEMP = 0.5
@@ -1636,7 +1864,7 @@ def run_collection(args: argparse.Namespace) -> Episode:
 
     def _on_sigint(_sig: int, _frm: object) -> None:
         stopping["flag"] = True
-        print("\n[collect] got Ctrl+C, wrapping up (releasing all keys, saving data)...")
+        print("\n[collect] 收到 Ctrl+C，正在收尾（松开所有按键、保存数据）...")
 
     old_handler = signal.signal(signal.SIGINT, _on_sigint)
 
@@ -1648,15 +1876,13 @@ def run_collection(args: argparse.Namespace) -> Episode:
     missed = 0
     invalid = 0
     print(f"[collect] {backends.description}")
-    print(f"[collect] plan {args.seconds:.0f}s = {total} frames, policy={policy.name}, obs_dim={OBS_DIM}")
+    print(f"[collect] 计划 {args.seconds:.0f}s = {total} 帧, 策略={policy.name}, 观测维度={OBS_DIM}")
 
-    # ★ live-match guard (before starting) ★
+    # ★ 活局守卫（开跑前）★
     #
-    # The trap we stepped in: when P1 was already dead, `RulePolicy.act` returned noop on its
-    # first line while collection still ran the full 10800 frames -> the whole episode was
-    # noop, which in-game looks like "the AI does not move at all".
-    # Worse, it turns the reward differences between rounds into differences in "how long P1
-    # stayed alive".
+    # 踩过的坑：P1 已死时 `RulePolicy.act` 第一行就返回 noop，而采集照样
+    # 采满 10800 帧 -> 整集全是 noop，游戏里表现为"AI 一动不动"。
+    # 更糟的是这会让不同轮次的奖励差异变成"P1 活了多久"的差异。
     _deadline = time.perf_counter() + 40.0
     _live, _last = False, None
     while time.perf_counter() < _deadline:
@@ -1670,30 +1896,30 @@ def run_collection(args: argparse.Namespace) -> Episode:
                 break
         time.sleep(0.3)
     if not _live:
-        print("[collect] X no live match found (both alive + frame advancing)")
-        print("[collect]   collecting now would only produce a whole episode of noop, **exiting immediately**.")
-        print("[collect]   Put the game into a match first (fixed_flow.py / pick_now.py).")
+        print("[collect] X 等不到活对局（双方存活 + frame 推进）")
+        print("[collect]   现在采下去只会得到一整集 noop，**直接退出**。")
+        print("[collect]   请先让游戏进一局（fixed_flow.py / pick_now.py）。")
         return episode
-    print(f"[collect] OK live match confirmed P1 hp={_last.p1.hp:.0f} "
+    print(f"[collect] OK 活对局确认 P1 hp={_last.p1.hp:.0f} "
           f"P2 hp={_last.p2.hp:.0f} frame={_last.frame}")
     if prev_frame.error:
-        print(f"[collect][warn] first frame had a read problem: {prev_frame.error}")
+        print(f"[collect][warn] 首帧有读取问题: {prev_frame.error}")
 
     try:
         for step in range(total):
             if stopping["flag"]:
                 break
-            # the rule policy's action = **the label** (the corrective action)
+            # rule 策略的动作 = **标签**（纠正动作）
             action = policy.act(prev_snap, prev_frame)
             send_action = action
-            # ★ dash intent (does not change the action space): see RulePolicy.dash_intent ★
+            # ★ dash 意图（不改动作空间）：见 RulePolicy.dash_intent ★
             _dash_name = getattr(policy, "dash_intent", None)
             if _dash_name:
                 policy.key_intent = None
             if _DAGGER_SESS is not None:
-                # DAgger: what actually goes to the game is the **model's** action,
-                # so the match is driven into the states the model itself would meet;
-                # and the rule action from the line above is recorded as the label.
+                # DAgger：真正发给游戏的是**模型**的动作，
+                # 这样对局被模型带进它自己会遇到的状态；
+                # 而上面那行 rule 的动作作为标签被记录下来。
                 import numpy as _np
 
                 _logits = _DAGGER_SESS.run(
@@ -1707,13 +1933,26 @@ def run_collection(args: argparse.Namespace) -> Episode:
                     send_action = int(_np.random.choice(len(_p), p=_p))
                 else:
                     send_action = int(_np.argmax(_logits))
-            if _dash_name:
-                # send the key by name (dashRight/dashLeft are in ACTION_SPECS but not in ACTIONS)
+            _send_name = _dash_name or ACTIONS[send_action]
+            if _send_name.startswith("wankai"):
+                # ★ 变身必须走原子序列（变身现在是动作 20）★
+                #   常规逐帧发键**发不出万解**：`FighterKeyCtrler.wanKai()` 要求
+                #   `wankai() && !(up || down)`，只要还有方向键按着就必然失败，
+                #   而且"J+K 同时按住"的窗口很窄。下面这套四步是隔离测试
+                #   （test_wankai_key.py）里成功的那套，真机也已复现。
+                backends.controller.release_all()
+                time.sleep(0.05)
+                backends.controller.logical_down("attack")
+                backends.controller.logical_down("jump")
+                time.sleep(0.20)
+                backends.controller.release_all()
+            elif _dash_name:
+                # 按名发键（dashRight/dashLeft 在 ACTION_SPECS 里，但不在 ACTIONS）
                 backends.controller.apply_action(_dash_name, dt=FRAME_DT)
             else:
                 backends.controller.apply_action_index(send_action, dt=FRAME_DT)
 
-            # wait for the next frame before reading (rate limited to hz)
+            # 等到下一帧再读（限速到 hz）
             target = t_start + (step + 1) * FRAME_DT
             slack = target - time.perf_counter()
             if slack > 0.0008:
@@ -1724,7 +1963,7 @@ def run_collection(args: argparse.Namespace) -> Episode:
             curr_frame = backends.reader.read_frame()
             if not curr_frame.valid:
                 invalid += 1
-                # Read failed: treat this frame as a copy of the previous one, don't pollute the data
+                # 读失败：把这一帧当成上一帧的拷贝，别污染数据
                 curr_frame = Frame(
                     frame=prev_frame.frame + 1,
                     p1=prev_frame.p1.copy(),
@@ -1736,11 +1975,11 @@ def run_collection(args: argparse.Namespace) -> Episode:
             reward = compute_reward(prev_frame, curr_frame)
             done = curr_frame.p1.hp <= 0 or curr_frame.p2.hp <= 0
             if done:
-                # ★ death -> end this episode early (stop padding it with noop) ★
-                print(f"[collect] death at frame {step}"
-                      f"(P1 hp={curr_frame.p1.hp:.0f} "
-                      f"P2 hp={curr_frame.p2.hp:.0f}) -> ending the episode early, "
-                      f"{step} frames collected")
+                # ★ 死亡 -> 提前结束本集（别再采 noop 充数）★
+                print(f"[collect] 第 {step} 帧出现死亡"
+                      f"（P1 hp={curr_frame.p1.hp:.0f} "
+                      f"P2 hp={curr_frame.p2.hp:.0f}）-> 提前结束本集，"
+                      f"已采 {step} 帧")
             episode.add(
                 obs=prev_snap.obs,
                 action=action,
@@ -1795,94 +2034,81 @@ def save_episode(episode: Episode, out_dir: Path, name: str) -> tuple[Path, Path
 def report(episode: Episode) -> None:
     s = episode.summary()
     if not s.get("steps"):
-        print("[collect] no samples collected at all")
+        print("[collect] 没有采到任何样本")
         return
     run = episode.meta.get("run", {})
-    print("\n[collect] collection finished")
-    print(f"  steps       : {s['steps']}  ({s['seconds']}s @60Hz)")
-    print(f"  actual hz   : {run.get('actual_hz')} Hz, missed {run.get('missed_ticks')}, "
-          f"bad reads {run.get('invalid_frames')}")
-    print(f"  obs dim     : {s['obs_dim']}")
-    print(f"  reward sum  : {s['reward_sum']:+.2f} (mean {s['reward_mean']:+.4f})")
-    print(f"  pos/neg rew : {s['positive_rewards']} / {s['negative_rewards']}")
-    print("  action dist :")
+    print("\n[collect] 采集完成")
+    print(f"  步数        : {s['steps']}  ({s['seconds']}s @60Hz)")
+    print(f"  实际帧率    : {run.get('actual_hz')} Hz, 掉帧 {run.get('missed_ticks')}, "
+          f"读失败 {run.get('invalid_frames')}")
+    print(f"  观测维度    : {s['obs_dim']}")
+    print(f"  奖励合计    : {s['reward_sum']:+.2f} (均值 {s['reward_mean']:+.4f})")
+    print(f"  正/负奖励   : {s['positive_rewards']} / {s['negative_rewards']}")
+    print("  动作分布    :")
     for name, count in s["action_distribution"].items():
         pct = 100.0 * count / s["steps"]
         print(f"    {name:<8} {count:>7}  {pct:5.1f}%")
     if s["positive_rewards"] == 0:
-        print("  [warn] not a single hit. Check: (1) is the key mapping right; "
-              "(2) is the window in the foreground; (3) is the starting distance too far")
-    # ★ automatically check "is there an action class with no samples at all" ★
+        print("  [warn] 一次命中都没有。检查：① 按键映射对不对 "
+              "② 窗口是否前台 ③ 角色初始距离是否太远")
+    # ★ 自动检查"有没有哪类动作一个样本都没有" ★
     #
-    # This is the **systematic defence** against the most expensive class of bug in this
-    # project:
-    #   **an action the demonstration never performs -> 0 samples for that class -> behaviour
-    #   cloning can never learn it.**
-    # We have been bitten three times, and every time the user found it first on the real
-    # machine:
-    #   * "you only attack, you can't guard, you can't fight at range and you never fire a
-    #     special" -> too few attack/zhao1/bisha samples
-    #   * "why don't you jump" -> jump/airAttack/airBisha/airSkill all at 0%
-    #   * "you keep pressing U" -> of the free moves it only picked the longest-reaching one,
-    #     everything else at 0
-    # Eyeballing 20 lines of output easily misses it, so the script shouts it out itself.
+    # 这是本项目最贵的一类 bug 的**系统性防线**：
+    #   **示范不做的动作 -> 该类样本为 0 -> 行为克隆永远学不会。**
+    # 已经被咬过三次，而且每次都是用户在真机上先发现的：
+    #   * "你只会攻击不会防御不会远攻不会放必杀" -> attack/zhao1/bisha 样本少
+    #   * "为什么你不会跳" -> jump/airAttack/airBisha/airSkill 全是 0%
+    #   * "一直按 U" -> 免费招只挑最远的那个，其它全 0
+    # 手动看 20 行输出很容易漏，所以让脚本自己喊出来。
     dist = s["action_distribution"]
     zero = [n for n, c in dist.items() if c == 0]
     if zero:
-        print(f"  [warn] **{len(zero)} action classes have 0 samples**: {', '.join(zero)}")
-        print("         -> the model can never learn these actions (behaviour cloning can only imitate what it has seen).")
-        print("         -> first check whether the policy code returns them anywhere; "
-              "a check like `grep -n 'jump' collect_data.py` is the fastest way.")
-    # Some actions are naturally rare, but "exactly 0" and "rare" are two different things, so
-    # report them separately
+        print(f"  [warn] **有 {len(zero)} 类动作样本为 0**：{', '.join(zero)}")
+        print("         -> 模型永远学不会这些动作（行为克隆只能模仿见过的动作）。")
+        print("         -> 先查策略代码里有没有地方返回它们；"
+              "`grep -n 'jump' collect_data.py` 这类检查最快。")
+    # 有些动作天然极少用，但"完全为 0"和"少"是两回事，分开报
     rare = [n for n, c in dist.items() if 0 < c < max(1, s["steps"]) * 0.002]
     if rare:
-        print(f"  [note] very few samples (<0.2%): {', '.join(rare)}"
-              f" -- these actions are basically unlearnable, consider raising the probability of triggering them in the policy")
+        print(f"  [note] 样本极少（<0.2%）：{', '.join(rare)}"
+              f" —— 这些动作基本学不到，考虑提高策略里触发它们的概率")
     if run.get("missed_ticks", 0) > s["steps"] * 0.05:
-        print("  [warn] more than 5% missed frames. On the real machine memory reads are "
-              "usually not the bottleneck; check first whether SendInput's hold frames are "
-              "too long, or drop --hz to 30 for collection.")
+        print("  [warn] 掉帧超过 5%。真机上读内存一般不是瓶颈，"
+              "优先查 SendInput 的 hold 帧是否太长、或把 --hz 降到 30 采集。")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Stage 3: 60Hz data collection")
-    parser.add_argument("--version", action="version",
-                        version=f"bvn-ai {_BVN_VERSION}")
-    parser.add_argument("--seconds", type=float, default=60.0, help="collection duration (seconds)")
-    parser.add_argument("--policy", choices=sorted(POLICIES), default="random", help="action policy")
-    parser.add_argument("--name", default="", help="output file name (timestamped by default)")
-    parser.add_argument("--out", default=str(DATA_DIR), help="output directory")
+    parser = argparse.ArgumentParser(description="阶段 3：60Hz 数据采集")
+    parser.add_argument("--seconds", type=float, default=60.0, help="采集时长（秒）")
+    parser.add_argument("--policy", choices=sorted(POLICIES), default="random", help="动作策略")
+    parser.add_argument("--name", default="", help="输出文件名（默认带时间戳）")
+    parser.add_argument("--out", default=str(DATA_DIR), help="输出目录")
     parser.add_argument(
         "--require-foreground",
         action="store_true",
         default=True,
-        help="[real] refuse to run if the foreground title does not match (on by default)",
+        help="[real] 前台标题不匹配就拒绝运行（默认开）",
     )
     parser.add_argument("--no-require-foreground", dest="require_foreground", action="store_false")
     parser.add_argument(
         "--dagger-onnx", default=None,
-        # Note: argparse does % formatting on help, so **a bare percent sign cannot appear in
-        # help** (it raises "badly formed help string"). That is why phrasing like "about
-        # three quarters" is used to avoid it.
-        help="DAgger mode: use this ONNX model to **drive the match** (so the situation is "
-             "dragged into the states the model itself would meet), but **the labels still "
-             "come from --policy** (the corrective action). "
-             "This addresses behaviour cloning's distribution drift -- measured, when the "
-             "model plays by itself catch1 is about three quarters of its actions, while on "
-             "the collected observations it is only about a third, meaning it dragged the "
-             "situation into regions the training data never saw.",
+        # 注意：argparse 会对 help 做 % 格式化，**help 里不能出现裸百分号**
+        # （会报 badly formed help string）。这里用"占比七成"这类写法避开。
+        help="DAgger 模式：用这个 ONNX 模型**驱动对局**（于是局面被模型带进它自己"
+             "会遇到的状态），但**标签仍由 --policy 给**（纠正动作）。"
+             "用于解决行为克隆的分布漂移 —— 实测模型自己打时 catch1 占约七成五，"
+             "而在采集观测上只有约三成五，说明它把局面带进了训练没见过的区域。",
     )
     parser.add_argument(
         "--dagger-temp", type=float, default=0.5,
-        help="sampling temperature when driving under DAgger (default 0.5, same as play_real)",
+        help="DAgger 驱动时的采样温度（默认 0.5，和 play_real 一致）",
     )
-    parser.add_argument("--verbose", action="store_true", help="print the situation once per second")
+    parser.add_argument("--verbose", action="store_true", help="每秒打印一次战况")
     add_backend_args(parser, default_mock=True)
     args = parser.parse_args(list(argv) if argv is not None else None)
     args = resolve_mode(args)
 
-    # ★ load the DAgger driving model ★
+    # ★ 加载 DAgger 的驱动模型 ★
     if args.dagger_onnx:
         global _DAGGER_SESS, _DAGGER_NAME, _DAGGER_TEMP
         import onnxruntime as _ort
@@ -1892,8 +2118,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         _DAGGER_NAME = _DAGGER_SESS.get_inputs()[0].name
         _DAGGER_TEMP = float(args.dagger_temp)
-        print(f"[collect] ★ DAgger mode: model {args.dagger_onnx} drives the match, "
-              f"labels come from {args.policy} (temperature {_DAGGER_TEMP})")
+        print(f"[collect] ★ DAgger 模式：模型 {args.dagger_onnx} 驱动对局，"
+              f"标签由 {args.policy} 给（温度 {_DAGGER_TEMP}）")
 
     if args.name:
         name = args.name
@@ -1904,13 +2130,13 @@ def main(argv: list[str] | None = None) -> int:
     if _DEF_DBG:
         _top = sorted(_DEF_DBG.get("st_counts", {}).items(),
                       key=lambda kv: -kv[1])[:8]
-        print("\n[dbg] new-defence counters:",
+        print("\n[dbg] 新防御计数:",
               {k: v for k, v in _DEF_DBG.items() if k != "st_counts"})
-        print("[dbg] live opp_state distribution top8:", _top)
+        print("[dbg] 现场 opp_state 分布 top8:", _top)
     npz_path, csv_path = save_episode(episode, Path(args.out), name)
     report(episode)
-    print(f"\n  data (npz)  : {npz_path}")
-    print(f"  data (csv)  : {csv_path}")
+    print(f"\n  数据(npz)   : {npz_path}")
+    print(f"  数据(csv)   : {csv_path}")
     return 0
 
 

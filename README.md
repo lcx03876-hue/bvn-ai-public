@@ -1,6 +1,6 @@
 # BVN-AI — a full AI loop for *Bleach vs Naruto*
 
-**Version 0.1.0** · [Changelog](CHANGELOG.md) · MIT (see [NOTICE](NOTICE) for the game)
+**Version 0.2.0** · [Changelog](CHANGELOG.md) · MIT (see [NOTICE](NOTICE) for the game)
 
 A complete, working AI stack for the Flash/AIR fighting game
 **死神vs火影 绊 - 开放** (*Bleach vs Naruto*, by 5DPLAY Game Studio):
@@ -18,11 +18,13 @@ against the real game running on Windows.
 > have. The original SWF used here is 3,083,259 bytes, SHA-256
 > `4F9C2BB2…FBCD026`.
 
-> **Headline result.** A behaviour-cloned policy that is then improved with
-> DAgger + offline-RL fine-tuning **beats the hand-written rule policy it was
-> cloned from** — 4 wins / 0 losses at difficulty level 3, net damage **+1132**
-> (95% CI **+460 … +1803**, n=4). The rule policy scores 3-0 / +926 under the
-> same protocol. Details in [`docs/RESULTS.md`](docs/RESULTS.md).
+> **Headline result.** A behaviour-cloned model, fine-tuned by DAgger + offline RL
+> and deployed **with an action mask**, now **matches the hand-written rule policy
+> it was cloned from** at difficulty level 3: **6 best-of-3 matches, all won
+> 2-0** (12/12 rounds), net damage **+1172 per round** (95 % CI **+955 … +1389**),
+> with two transformations in **5 of 6** matches. The rule policy scores +1208
+> (+844 … +1571) under the identical protocol. Full numbers, confidence
+> intervals and the negative results are in [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ---
 
@@ -54,18 +56,41 @@ post-mortem is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#why-not-memory-s
 
 ---
 
+## Related work (checked 2026-10)
+
+A search of public repositories around this game and around ActionScript state
+access found the following. None of them is a working game-playing AI for BVN.
+
+| Project | What it is | Overlap with this repo |
+|---|---|---|
+| [5DPLAY-Game-Studio/BleachVsNaruto](https://github.com/5DPLAY-Game-Studio/BleachVsNaruto) | The game itself (ActionScript, ~105★) | The target. Also: [OpenBleachVsNaruto](https://github.com/5DPLAY-Game-Studio/OpenBleachVsNaruto), an open-source 3.4 debug build — source-level modification is accepted in this ecosystem |
+| [IMD1100/Vision-DQN-Combat](https://github.com/IMD1100/Vision-DQN-Combat) | Vision-based (OpenCV → CNN → DQN) BVN auto-battler, Feb 2025 | Closest in intent. A skeleton: 4 commits in one day, `agent/`, `environment/` and `datas/` are empty, no trained model and no reported result |
+| [QIN2DIM/2D-object-detection-Bleach-vs-Naruto](https://github.com/QIN2DIM/2D-object-detection-Bleach-vs-Naruto) | Object detection on BVN frames (2021, ~6★) | Perception only — no control loop |
+| [novelyear/bvn](https://github.com/novelyear/bvn) | A C++/SFML re-implementation of BVN | The author explicitly abandoned the AI: with a poor AI the game was changed to two-player only |
+| [KevinChenXue/Naruto-vs-Bleach](https://github.com/KevinChenXue/Naruto-vs-Bleach), [zstar1003/…_godot](https://github.com/zstar1003/BleachVsNaruto_godot), [qiulinfan/…_pocket](https://github.com/qiulinfan/bleach-vs-naruto-pocket) | Ports / re-implementations | None — no learning, no state bridge |
+
+Flash-game reinforcement learning in general is usually **pixel-based**
+(screenshot → CNN → RL; e.g. FlashRL-style platforms). The approach here —
+patching the game's own ActionScript so it exports a per-frame JSON state — was
+not found in any public repository for this game or for other Flash/AIR
+fighters. (Caveat: GitHub code search requires authentication, so this is a
+statement about *public repositories*, not a proof of absence.)
+
+---
+
 ## Architecture
 
 Six layers, each independently verifiable:
 
 | # | Layer | Module | Status |
 |---|---|---|---|
-| 1 | State reader | `read_bridge.py` + injected AS3 | 30 Hz, exact values |
-| 2 | State encoder | `state.py` (100-dim observation) | ✅ |
-| 3 | Data collection | `collect_data.py` (rule / random / rotate / DAgger) | ✅ |
+| 1 | State reader | `read_bridge.py` + injected AS3 | 60 Hz game, exact values |
+| 2 | State encoder | `state.py` (112-dim observation) | ✅ |
+| 3 | Data collection | `collect_data.py` (rule / random / DAgger), `collect_match.py` (full matches) | ✅ |
 | 4 | Training | `train.py` (BC → offline-RL fine-tune) | ✅ |
-| 5 | ONNX export | `export_onnx.py` | max abs err 5.7e-06, argmax 100% match |
-| 6 | Real-time inference | `infer.py --bridge` | **0.255 ms** per step (60 Hz budget 16 ms) |
+| 5 | ONNX export | `export_onnx.py` | max abs err 6.9e-05, argmax 100 % match |
+| 6 | Real-time inference | `infer.py` / `play_real.py` (optional **action mask**) | **0.255 ms** per step (60 Hz budget 16 ms) |
+| — | Offline checks | `diag_label_drift.py`, `eval_offline.py`, `diag_hits_taken.py` | no game time needed |
 
 The state reader exposes the *same interface* as the abandoned
 memory-scanner backend, so layers 2–6 never needed to change.
@@ -75,25 +100,39 @@ memory-scanner backend, so layers 2–6 never needed to change.
 ## What's in the box
 
 ```
+models/wankai_v9/      ← the reference weights behind the results below (1.6 MB)
+                         qnet.onnx + policy.onnx + both PyTorch checkpoints + meta
+
 play.py              ← one command: launch game, set up, play a round, report
 go_vscpu.py            panel setup + verified match start (--launch for 0-frame gap)
-play_real.py           the control loop (rule policy or ONNX model)
+play_real.py           the control loop (rule policy or ONNX model, optional --mask)
 match_run.py           best-of-3 match runner with per-round accounting
+run_dagger_matches.py  unattended best-of-3 collection/evaluation (panel-verified)
 
 read_bridge.py         layer 1 — read the injected JSON, with freshness guard
-state.py               layer 2 — observation encoding + reward function
-collect_data.py        layer 3 — includes RulePolicy (the hand-written opponent)
+state.py               layer 2 — observation encoding (112-dim) + reward function
+collect_data.py        layer 3 — includes RulePolicy (the hand-written demonstrator)
+collect_match.py       layer 3 — full-match collection / DAgger driver
+relabel_offline.py     re-label recorded frames with the *current* rule policy
 train.py               layer 4 — behaviour cloning + conservative offline RL
 export_onnx.py         layer 5
 infer.py               layer 6
+obs_compat.py          lets a 108-dim model run on the 112-dim runtime
+action_mask.py         affordability / geometry masks applied before sampling
 
 build_bridge.py        generates the AS3 injection and rebuilds the SWF
 build_debug.py         applies every patch in one pass
 game_patches/          the AS3 snippets that get injected (see below)
 
-battle_multi.py        automated multi-round evaluation (win rate + CI)
+battle_multi.py        legacy multi-round evaluation (win rate + CI)
+run_ladder.py          difficulty ladder
 analyze_rounds.py      per-round damage, segmented by HP reset
 analyze_efficiency.py  damage per action, duty cycle, damage/second
+diag_label_drift.py    label regression when the rule policy changes
+eval_offline.py        compare several models on one labelled dataset
+diag_hits_taken.py     decomposes damage taken (first hit vs. eating the combo)
+rebuild_obs_qigap.py   obs migration 108 → 112 (adds the qi_gap feature exactly)
+check_dataset.py       dataset sanity: backend, frame ratio, observation scale
 ```
 
 ---
@@ -128,27 +167,32 @@ python play.py --rounds 4       # four rounds
 
 ## Results
 
-All numbers below are **real games**, difficulty level 3, same character
-(Ichigo vs Naruto AI), same protocol (`battle_multi.py`, 120 s per round).
+All numbers below are **real games**, difficulty **level 3** (verified through the
+bridge as `aiLevel` / `aiModel`), Ichigo vs the Naruto AI on `GenSe`, played as
+complete **best-of-3 matches** with the characters and map written through the
+tester panel and read back for verification.
 
-| Policy | Record | Net damage | 95% CI |
-|---|---|---|---|
-| Hand-written rule policy | 3-0 | +926 | +288 … +1565 |
-| Behaviour cloning only | 2-1 | +82 | −837 … +1000 |
-| DQN fine-tune (naïve) | 0-3 | −484 | −834 … −134 |
-| DQN fine-tune (conservative) | 1-2 | −614 | −2157 … +928 |
-| **DAgger + conservative DQN** | **4-0** | **+1132** | **+460 … +1803** |
+| Policy | Matches | Rounds | Net damage / round | 95 % CI | Two transformations |
+|---|---|---|---|---|---|
+| Hand-written rule policy | 3 × 2-0 | 6 | **+1208** | +844 … +1571 | 2 / 3 |
+| BC + DAgger + offline RL (`wankai_v8b`) | 4-1-1 | 6 | +830 | +396 … +1264 | 4 / 6 |
+| Same family (`wankai_v9`), **no mask** | 3 × 2-0 | 6 | +1161 | — | 1 / 3 |
+| **`wankai_v9` + action mask** | **6 × 2-0** | **12** | **+1172** | **+955 … +1389** | **5 / 6** |
 
-Two findings worth highlighting:
+Three findings worth highlighting:
 
-1. **Behaviour cloning alone can only *match* its teacher.** It reached 2-1 /
-   +82 against the rule policy's 3-0 / +926 — same ballpark, no better. This is
-   expected: BC learns an approximation of the demonstrator and cannot exceed it.
-2. **Naïve offline RL actively destroys the policy.** Agreement with the
-   demonstration collapsed from 62.0% to **1.9%** (random is 5%). The cause was
-   extrapolation error: `argmax` over *all* 20 actions while 4 of them had zero
-   samples in the dataset. Fixing that (OOD masking + BC anchor + CQL) plus
-   DAgger to close the distribution gap is what produced the 4-0 result.
+1. **The deployment mask, not the network, was the bottleneck.** Without it the
+   model fired **22 of 34** transform attempts with too little qi (64.7 %), each
+   one running a 250 ms atomic key sequence that cannot succeed. With the mask:
+   0 / 34, two transformations in 3 of 3 matches, damage taken −17 %.
+2. **Behaviour cloning buys you the teacher, not more.** BC alone lands in the
+   rule policy's ballpark; DAgger (model drives, rule labels) plus conservative
+   offline RL is what closes the remaining gap.
+3. **Offline agreement is not a predictor of real play.** A retrained model with
+   much better offline numbers (transform recall 8.1 % → 52.3 %) played *worse*
+   on the real game. Every claim here was validated by matches, not by validation
+   accuracy. Details, including the negative results, in
+   [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ---
 
@@ -172,6 +216,23 @@ This repository keeps the failures, not just the successes.
 * **Mock evaluation does not predict real performance.** The same BC model
   scored 1-2 in the mock and 3-0 in the mock on different seeds, while its real
   result was unrelated to both. Only real games are trusted here.
+* **A model can be confidently wrong about its own resources.** Nothing in the
+  observation said what each move *costs*, so the policy fired transforms it
+  could not afford (64.7 % of attempts). The fix was a mask, not a bigger network.
+* **Training-time and deployment-time encodings drifted.** An offline migration
+  wrote the "forms used" feature as raw counts (0/1/2) while the runtime
+  normalises it to 0 / 0.5 / 1. Nothing raises an error; the model simply
+  believes it has transformed once when it has transformed twice, and "forgets
+  how to fight" after the second transformation. `check_dataset.py` now asserts
+  the observation scale.
+* **Transforming heals**, so `max(hp) - min(hp)` understates damage taken — the
+  error grows with the number of transformations, i.e. exactly for the policies
+  you want to compare. Damage is now summed from per-frame HP drops.
+* **Label drift is silent.** Changing the rule policy changes the training labels
+  (one branch added in front of another reshuffles which behaviour gets
+  demonstrated). `diag_label_drift.py` replays a frozen set of matches and reports
+  every action whose share moved, so a rule change cannot quietly starve a
+  behaviour that the model was supposed to learn.
 
 ---
 

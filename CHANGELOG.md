@@ -10,6 +10,67 @@ run-directory format may still change between minor releases.
 
 ---
 
+## [0.2.0] - 2026-10-18
+
+The model now **matches the hand-written rule policy** at difficulty level 3, and
+the project stops trusting offline metrics as a proxy for real play.
+
+### Result
+
+| Policy | Matches | Rounds | Net damage / round | 95 % CI | Two transformations |
+|---|---|---|---|---|---|
+| Hand-written rule policy | 3 × 2-0 | 6 | +1208 | +844 … +1571 | 2 / 3 |
+| `wankai_v8b` (BC + DAgger + offline RL) | 4-1-1 | 6 | +830 | +396 … +1264 | 4 / 6 |
+| `wankai_v9`, no mask | 3 × 2-0 | 6 | +1161 | — | 1 / 3 |
+| **`wankai_v9` + action mask** | **6 × 2-0** | **12** | **+1172** | **+955 … +1389** | **5 / 6** |
+
+Protocol changed to **complete best-of-3 matches with panel-verified characters**
+(`run_dagger_matches.py`), and damage is now summed from per-frame HP drops.
+
+### Added
+
+- **Deployment action mask** (`--mask`; `action_mask.py` is finally called from the
+  control loop). Without it 22 of 34 transform attempts happened below the 300-qi
+  cost; with it, 0 of 34, two transformations in 3/3 matches, damage taken −17 %.
+- **`qi_gap` observation feature** — `OBS_DIM` 108 → **112**; `rebuild_obs_qigap.py`
+  migrates existing datasets exactly (it is a pure function of `qi`).
+- **`obs_compat.py`** — lets a 108-dim model run on the 112-dim runtime.
+- **`diag_label_drift.py`** — replays a frozen set of matches and reports how much
+  each action's share moved, so a rule change cannot silently starve a behaviour.
+- **`eval_offline.py`** — compares several models on one labelled dataset
+  (turn-to-face rate, guard rate on threat frames, transform choice, per-stage mix).
+- **`diag_hits_taken.py`** — decomposes damage taken into "first hit" vs "eating
+  the rest of the combo", with the opponent's state and our own locked state.
+- **`run_dagger_matches.py`** — unattended best-of-3 collection/evaluation.
+- **Full-match collector** (`collect_match.py`) and **offline re-labelling**
+  (`relabel_offline.py`) are now part of the public tree.
+- `check_dataset.py` now asserts that the observation scale matches the runtime.
+
+### Fixed
+
+- **Observation scale mismatch in migrated data**: `forms_used` was written as raw
+  counts (0/1/2) while the runtime normalises to 0 / 0.5 / 1.0. The model behaved
+  as if it had transformed once when it had transformed twice. `rebuild_obs_forms.py`
+  now matches the runtime, and `--fix-forms` repairs historical datasets in place.
+- **`F2` was sent without a key-up**, so switching the tester panel between
+  practice mode and vs-CPU silently did nothing (the key stayed latched).
+- **`battle_multi.py` never recorded the opponent.** Character selection clicked
+  the grid without verification; one recorded series was accidentally played
+  against a different fighter. It now writes `p1Id` / `p2Id` into every result.
+
+### Changed
+
+- Evaluation defaults to panel-verified characters and reports the actual opponent.
+
+### Removed (negative results, kept in `docs/RESULTS.md`)
+
+- Forced third round (`--fixed-rounds`): the game ends a match at two wins, so the
+  collector only spun on the result screen and recorded dead air.
+- Forced qi hoarding, break-defence dodging, a spacing state machine and the
+  `qi_gap` retrain — all measured, all worse or neutral, all reverted.
+
+---
+
 ## [0.1.0] - 2026-10-16
 
 First public release. The full loop — read state, collect, train, export,

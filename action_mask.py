@@ -1,26 +1,25 @@
-"""Action legality mask: blacks out the actions that cannot possibly come out in the current situation.
+"""动作合法性掩码：把"当前局面下不可能出招的动作"屏蔽掉。
 
-Why this is needed:
-  Of the 13 actions, 3 classes are **conditional** (per the local decompiled source):
-    * `bisha`      needs 100 qi   (source `FighterKeyCtrler.bisha()` takes the superSkill branch)
-    * `bishaSUPER` needs 300 qi   (`bishaSUPER()` = superSkill && down)
-    * `airAttack`  needs the character to be in the air (`attackAIR()` = attack, only ever called in the air)
-  If we let the network pick freely among 13 actions during training, it burns a huge number of
-  samples trying options like "throw a super with no qi" that always fail -- the mask cuts those
-  straight out, and sample efficiency improves noticeably.
+为什么需要：
+  13 个动作里有 3 类是**有前提条件**的（依据本地反编译源码）：
+    * `bisha`     需要 100 气   （源码 `FighterKeyCtrler.bisha()` 走 superSkill 分支）
+    * `bishaSUPER` 需要 300 气  （`bishaSUPER()` = superSkill && down）
+    * `airAttack` 需要角色在空中（`attackAIR()` = attack，只在空中被调用）
+  训练时如果让网络从 13 个里自由选，它会花大量样本去试"没气时放必杀"这种
+  永远失败的选项 —— 掩码直接砍掉，样本效率提升明显。
 
-Basis (decompiled_main/scripts/.../fighter/ctrler/FighterKeyCtrler.as):
+依据（decompiled_main/scripts/.../fighter/ctrler/FighterKeyCtrler.as）：
     bisha()       = superSkill && !(up||down)
     bishaSUPER()  = superSkill && down
-    attackAIR()   = attack (air)
+    attackAIR()   = attack（空中）
     assist()      = special / beckons
-Qi cap 300 (source FighterMain.qiMax = 300).
+气量上限 300（源码 FighterMain.qiMax = 300）。
 
-Usage::
+用法::
 
     from action_mask import mask_for, apply_mask
     m = mask_for(qi=120, in_air=False)     # -> [bool] * 13
-    a = apply_mask(q_values, m)            # argmax under the mask
+    a = apply_mask(q_values, m)            # 按掩码取 argmax
 """
 
 from __future__ import annotations
@@ -38,23 +37,22 @@ from config import (
     NUM_ACTIONS,
 )
 
-# Qi cap (source FighterMain.qiMax = 300)
+# 气量上限（源码 FighterMain.qiMax = 300）
 QI_MAX = 300.0
-# The state ids for "move in progress" -- **taken from measured runtime values, not guessed**
-# (see docs/BRIDGE.md)
+# "出招中"的状态号 —— **按运行时实测值，不是猜的**（见 docs/BRIDGE.md）
 #
-# This used to be `range(20, 31)`, on the reasoning that "20~30 is probably the attack window".
-# The real values measured through the bridge are:
-#     0  = standing / idle
-#     10 = light attack (J)
-#     11 = ranged attack (U / zhao1)
-#     14 = jump
-#     22 = **taking a hit** (not an attack!)
-# So the old range(20,31) treated "taking a hit" as "move in progress",
-# and also missed the real attacks (10/11) -- the mask was exactly backwards.
+# 曾经写成 `range(20, 31)`，理由是"猜 20~30 是出招区间"。
+# 桥接实测的真实值是：
+#     0  = 站立/空闲
+#     10 = 普攻（J）
+#     11 = 远攻（U / zhao1）
+#     14 = 跳跃
+#     22 = **受击**（不是出招！）
+# 所以原来的 range(20,31) 会把"受击"当成"出招中"，
+# 又会把真正的出招（10/11）漏掉 —— 掩码正好反了。
 #
-# Note: what is listed here is the set of **measured and confirmed** state ids; the game has other
-# state ids too (running, hitstun, per-character moves) -- fill those in once more data is collected.
+# 注意：这里列的是**已实测确认**的状态号；游戏里还有别的状态号
+# （跑动、硬直、各角色不同招式），等采到更多数据再补。
 ATTACKING_STATES = frozenset({10, 11, 12, 13})
 
 
@@ -63,18 +61,33 @@ def mask_for(
     in_air: bool = False,
     action_state: int = 0,
     can_act: bool = True,
+    can_wankai: bool = True,
+    hoard_qi: bool = False,
 ) -> list[bool]:
-    """Return a boolean mask of length ``NUM_ACTIONS``.
+    """返回长度为 ``NUM_ACTIONS`` 的布尔掩码。
 
-    Args:
-      qi            current qi
-      in_air        whether the character is airborne
-      action_state  internal game state id
-      can_act       whether acting is allowed (False while in hitstun / dead)
+    参数：
+      qi            当前气量
+      in_air        是否在空中
+      action_state  游戏内部状态号
+      can_act       是否允许行动（被打硬直 / 死亡时为 False）
+      can_wankai    这个角色能不能变身（桥接 `p1Wankai`；
+                    不能变的角色发变身只是白等气，必须屏蔽）
     """
     mask = [False] * NUM_ACTIONS
+    # ★ 攒气保护（hoard_qi）：快攒够 300 时不许把气花在输出招上 ★
+    #   实测（2026-10-18）：v10/v11 一变完就把气花在 bisha/bishaUP 上，
+    #   第二次变身永远攒不到。而**标签层其实是对的** —— 在"气 220~300 且还没变满
+    #   两次"的 35,690 帧里，标签里 bisha/bishaUP 出现 **0 次**。
+    #   所以问题在模型的泛化，只能在执行层兜住：把这些"费气输出招"屏蔽掉。
+    #   ⚠️ **实测有害（2026-10-18）**：v11+掩码+攒气保护 3 场，
+    #      每小局净伤害 +1145 -> **+831**（CI +288~+1375），还首次出现 2-1 输一局；
+    #      变身次数没增加（1/2/1）。结论：在 220~300 窗口禁输出，损失大于收益 ——
+    #      因为"够不够 300"还取决于会不会被打断，硬攒并不等于能变。
+    #      参数保留，但**默认不要在部署里传 True**。
+    _spend = {"bisha", "bishaUP", "bishaSUPER", "airBisha"} if hoard_qi else set()
     if not can_act:
-        # Only noop is allowed
+        # 只能不按（noop）
         mask[ACTION_INDEX["noop"]] = True
         return mask
 
@@ -82,13 +95,18 @@ def mask_for(
 
     for i, name in enumerate(ACTIONS):
         if name == "noop":
-            mask[i] = True          # pressing nothing is always legal
+            mask[i] = True          # 什么都不按永远合法
             continue
         if name in AIR_ONLY_ACTIONS and not in_air:
             continue
         if name in GROUND_ONLY_ACTIONS and in_air:
             continue
         if qi < ACTION_QI_COST.get(name, 0):
+            continue
+        if name in _spend:
+            continue
+        if name == "wankai" and not can_wankai:
+            # 变身还要求角色能变（`hasWankai()`）；不能变的角色发它只是白等气
             continue
         if in_action and name not in ("attack", "airAttack"):
             continue
@@ -101,64 +119,66 @@ def apply_mask(
     mask: Sequence[bool],
     fallback: int | None = None,
 ) -> int:
-    """Argmax under the mask. Returns noop when the mask is all False (not acting is safer than flailing)."""
+    """按掩码取 argmax。掩码全 False 时返回 noop（不行动比乱动安全）。"""
     q = np.asarray(q_values, dtype=np.float64).reshape(-1)
     m = np.asarray(mask, dtype=bool).reshape(-1)
     if q.size != m.size:
-        raise ValueError(f"q_values length {q.size} != mask length {m.size}")
+        raise ValueError(f"q_values 长度 {q.size} != mask 长度 {m.size}")
     if not m.any():
         return ACTION_INDEX["noop"] if fallback is None else int(fallback)
     return int(np.argmax(np.where(m, q, -np.inf)))
 
 
 def mask_from_frame(frame: Any) -> list[bool]:
-    """Derive the mask from a ``memory_reader.Frame``.
+    """从 ``memory_reader.Frame`` 推掩码。
 
-    Airborne test: the source uses `isInAir`, but there is no direct field for it in memory,
-    so we approximate with "y clearly above the ground" (smaller y is higher); recalibrate once
-    we have real coordinates off the machine.
+    空中判定：源码用 `isInAir`，但内存里没有直接字段，
+    这里用"y 明显小于地面"近似（y 越小越靠上）；等有真机坐标后再校准。
     """
     p1 = frame.p1
-    qi = float(getattr(p1, "mp", 0.0))          # qi reuses the existing field name
+    qi = float(getattr(p1, "mp", 0.0))          # 气量沿用现有字段名
     in_air = float(getattr(p1, "y", 0.0)) < -20.0
     can_act = float(getattr(p1, "hp", 1.0)) > 0 and int(getattr(p1, "hitstun", 0)) == 0
     return mask_for(
         qi=qi, in_air=in_air,
         action_state=int(getattr(p1, "state", 0)), can_act=can_act,
+        can_wankai=bool(getattr(p1, "can_wankai", True)),
     )
 
 
 if __name__ == "__main__":
     print(f"NUM_ACTIONS = {NUM_ACTIONS}\n")
-    print("Preconditions for each action:")
+    print("各动作的前置条件：")
     for i, name in enumerate(ACTIONS):
         cond = []
         if name in AIR_ONLY_ACTIONS:
-            cond.append("needs air")
+            cond.append("需空中")
         if name in GROUND_ONLY_ACTIONS:
-            cond.append("needs ground")
+            cond.append("需地面")
         if ACTION_QI_COST.get(name):
-            cond.append(f"needs {ACTION_QI_COST[name]} qi")
-        print(f"  {i:>2} {name:<12} {', '.join(cond) or 'none'}")
+            cond.append(f"需 {ACTION_QI_COST[name]} 气")
+        print(f"  {i:>2} {name:<12} {', '.join(cond) or '无'}")
 
-    print("\nLegal actions in different situations:")
+    print("\n不同局面下的合法动作：")
     cases = [
-        ("ground full qi idle", dict(qi=300, in_air=False, action_state=0)),
-        ("ground 0 qi idle", dict(qi=0, in_air=False, action_state=0)),
-        ("ground 120 qi", dict(qi=120, in_air=False, action_state=0)),
-        ("air full qi", dict(qi=300, in_air=True, action_state=0)),
-        ("move in progress (state=25)", dict(qi=300, in_air=False, action_state=25)),
-        ("hitstun can_act=F", dict(qi=300, in_air=False, can_act=False)),
+        ("地面 满气 空闲", dict(qi=300, in_air=False, action_state=0)),
+        ("地面 满气 不能变身", dict(qi=300, in_air=False, action_state=0,
+                                    can_wankai=False)),
+        ("地面 0 气 空闲", dict(qi=0, in_air=False, action_state=0)),
+        ("地面 120 气", dict(qi=120, in_air=False, action_state=0)),
+        ("空中 满气", dict(qi=300, in_air=True, action_state=0)),
+        ("出招中 (state=25)", dict(qi=300, in_air=False, action_state=25)),
+        ("被打硬直 can_act=F", dict(qi=300, in_air=False, can_act=False)),
     ]
     for label, kw in cases:
         m = mask_for(**kw)
         ok = [ACTIONS[i] for i, v in enumerate(m) if v]
-        print(f"  {label:<24} -> {len(ok):>2} of them: {', '.join(ok)}")
+        print(f"  {label:<24} -> {len(ok):>2} 个: {', '.join(ok)}")
 
-    # Self-check: the mask must always let noop through
+    # 自检：掩码必须永远至少放行 noop
     for qi in (0, 50, 100, 200, 300):
         for air in (False, True):
             for st in (0, 25):
                 m = mask_for(qi=qi, in_air=air, action_state=st)
-                assert any(m), f"mask all False: qi={qi} air={air} st={st}"
-    print("\nSelf-check passed: noop is available in every situation, the mask is never empty.")
+                assert any(m), f"掩码全 False: qi={qi} air={air} st={st}"
+    print("\n自检通过：任何局面下 noop 都可用，不会出现空掩码。")

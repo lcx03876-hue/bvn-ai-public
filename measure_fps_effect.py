@@ -1,16 +1,14 @@
-"""Measure how "game frame rate" affects **wall-clock behaviour** (answering the user: does bumping the frame count to 60 make a difference).
+"""量「游戏帧率」对**墙钟行为**的影响（回答用户：帧数调到 60 会有影响吗）。
 
-Two things must be kept apart:
-  * **frame rate** (how many logic frames per second) -- controlled by the panel's `fps` field
-  * **wall-clock duration** -- how many seconds a mechanic (e.g. jumping, going down) actually takes
+要区分两件事：
+  * **帧率**（每秒多少逻辑帧）—— 面板 `fps` 字段控制
+  * **墙钟时长** —— 一个机制（如跳跃、倒地）实际花多少秒
 
-If the game logic "counts by frames" (constants like `_hurtDownFrame = 15`),
-then at 60 FPS those same 15 frames take only 0.25 s -> **the game is twice as
-fast on the wall clock**.
-This script measures "jump airtime" live from the bridge stream and compares the
-two frame rates.
+如果游戏逻辑是"按帧计数"（`_hurtDownFrame = 15` 这类 const），
+那么 60 FPS 下同样的 15 帧只花 0.25 秒 -> **游戏在墙钟上快一倍**。
+本脚本用桥接流实测"跳跃滞空时长"，对比两种帧率。
 
-Usage::
+用法::
     python measure_fps_effect.py --seconds 25
 """
 
@@ -31,7 +29,7 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=25.0)
     args = ap.parse_args()
 
-    print(f"[fps] sampling the bridge stream for {args.seconds:.0f} seconds…")
+    print(f"[fps] 采样 {args.seconds:.0f} 秒桥接流…")
     t0 = time.time()
     last_frame = None
     frame_marks: list[tuple[float, int]] = []
@@ -53,7 +51,7 @@ def main() -> int:
         time.sleep(0.002)
 
     if len(frame_marks) < 5:
-        print("❌ too few samples (not in a match?)")
+        print("❌ 样本太少（不在对局里？）")
         return 1
 
     total_f = frame_marks[-1][1] - frame_marks[0][1]
@@ -61,13 +59,13 @@ def main() -> int:
     fps = total_f / max(1e-9, total_t)
     gaps = [frame_marks[i + 1][0] - frame_marks[i][0]
             for i in range(len(frame_marks) - 1)]
-    print(f"\n[fps] game frame rate = **{fps:.1f} frames/sec**")
-    print(f"[fps] bridge updates = {len(frame_marks)} times / {total_t:.1f} seconds "
+    print(f"\n[fps] 游戏帧率 = **{fps:.1f} 帧/秒**")
+    print(f"[fps] 桥接更新 = {len(frame_marks)} 次 / {total_t:.1f} 秒 "
           f"= **{len(frame_marks) / total_t:.1f} Hz**")
-    print(f"[fps] bridge interval median {1000 * statistics.median(gaps):.1f} ms "
-          f"(= observation latency)")
+    print(f"[fps] 桥接间隔 中位 {1000 * statistics.median(gaps):.1f} ms "
+          f"（= 观测延迟）")
 
-    # Wall-clock duration + frame count of jump airtime (st=14)
+    # 跳跃滞空（st=14）的墙钟时长 + 帧数
     segs: list[tuple[float, int]] = []
     cur = None
     for r in rows:
@@ -83,14 +81,14 @@ def main() -> int:
     if segs:
         walls = [s[0] for s in segs]
         nfr = [s[1] for s in segs]
-        print(f"\n[fps] jump airtime segments: {len(segs)}")
-        print(f"      wall-clock duration median **{statistics.median(walls):.2f} seconds**"
-              f"  range {min(walls):.2f}~{max(walls):.2f}")
-        print(f"      frame count     median {statistics.median(nfr):.0f} frames")
+        print(f"\n[fps] 跳跃滞空段 {len(segs)} 段")
+        print(f"      墙钟时长 中位 **{statistics.median(walls):.2f} 秒**"
+              f"  范围 {min(walls):.2f}~{max(walls):.2f}")
+        print(f"      帧数     中位 {statistics.median(nfr):.0f} 帧")
     else:
-        print("\n[fps] no jump caught during this window")
+        print("\n[fps] 这段时间没抓到跳跃")
 
-    # Wall-clock duration of the down invincible period (22/23/24) -- this one feeds straight into wake-up pressure
+    # 倒地无敌期（22/23/24）的墙钟时长 —— 这个直接关系到起身压制
     inv: list[float] = []
     cur = None
     for r in rows:
@@ -101,16 +99,16 @@ def main() -> int:
             inv.append(r["t"] - cur)
             cur = None
     if inv:
-        print(f"\n[fps] invincible period(22/23/24) {len(inv)} segments, "
-              f"wall-clock duration median **{statistics.median(inv):.2f} seconds**")
-        print("      (the median 99 frames = 3.30 seconds I derived in the code assuming 30FPS)")
-        print(f"      -> converted from frame count = {statistics.median(inv) * fps:.0f} frames")
+        print(f"\n[fps] 无敌期(22/23/24) {len(inv)} 段，"
+              f"墙钟时长 中位 **{statistics.median(inv):.2f} 秒**")
+        print("      （我在代码里按 30FPS 推出的中位 99 帧 = 3.30 秒）")
+        print(f"      -> 用帧数换算 = {statistics.median(inv) * fps:.0f} 帧")
 
-    print("\nreading:")
-    print("  * if frame rate=30 and jump wall clock is 1.1 seconds -> consistent with the docs")
-    print("  * if switched to 60: **same frame count, half the wall clock** = the game is twice as fast on the wall clock")
-    print("    then every constant written in frames (inv_start/pressure_start/holdn…)")
-    print("    changes meaning on the wall clock -- but **the frame-count meaning does not change**.")
+    print("\n判读：")
+    print("  * 若帧率=30 且跳跃墙钟 1.1 秒 -> 与文档一致")
+    print("  * 若改用 60：**帧数不变、墙钟减半** = 游戏在墙钟上快一倍")
+    print("    那时所有按帧写的常数（inv_start/pressure_start/holdn…）")
+    print("    墙钟含义都会变 —— 但**帧数含义不变**。")
     return 0
 
 

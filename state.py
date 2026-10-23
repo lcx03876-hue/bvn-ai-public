@@ -1,28 +1,27 @@
-"""Phase 2: state vector wrapper.
+"""阶段 2：状态向量封装。
 
-Turns a ``Frame`` (raw memory read-out) into the low-dimensional vector fed to
-the network, and defines the reward function.
+把 ``Frame``（原始内存读数）转成给网络的低维向量，并定义奖励函数。
 
-Vector layout (one frame is ``FRAME_DIM`` dims; the final input is
-``FRAME_STACK`` adjacent frames concatenated)::
+向量布局（单帧 ``FRAME_DIM`` 维，最终输入是相邻 ``FRAME_STACK`` 帧拼接）::
 
-    [0]      self_x_norm      own x, relative to stage centre, [-1, 1]
-    [1]      self_y_norm      own y (smaller = higher up = higher)
-    [2]      self_hp_norm     own hp ratio
-    [3]      self_mp_norm     own qi ratio
-    [4]      self_facing      facing +1 / -1
-    [5]      self_hitstun     whether hit into hitstun
-    [6]      self_alive       whether alive
-    [7..13]  opp_*            opponent, same 7 dims
-    [14]     dx               relative horizontal distance (self is the origin)
-    [15]     dy               relative vertical height
-    [16]     hp_diff          hp difference (self - opponent)
-    [17]     mp_diff          qi difference
-    [18..33] self_state one-hot (16) + opp_state one-hot (16)
+    [0]      self_x_norm      自身 x，相对场地中心，[-1, 1]
+    [1]      self_y_norm      自身 y（越小越靠上 = 越高）
+    [2]      self_hp_norm     自身血量比例
+    [3]      self_mp_norm     自身气量比例
+    [4]      self_facing      朝向 +1 / -1
+    [5]      self_hitstun     是否被打中硬直
+    [6]      self_alive       是否存活
+    [7]      self_forms       本场已变身次数 / 2   ← 让"还能不能变身"可判定
+    [8]      self_can_wankai  这个角色能不能变身
+    [9..17]  opp_*            对手同样 9 维
+    [18]     dx               水平相对距离（自身为原点）
+    [19]     dy               垂直相对高度
+    [20]     hp_diff          血量差（自身 - 对手）
+    [21]     mp_diff          气量差
+    [22..53] self_state one-hot (16) + opp_state one-hot (16)
 
-The opponent half negates x/facing, so that "the opponent is to my left/right"
-has a symmetric numeric expression; the coordinate system itself is anchored to
-P1 and does not flip with facing (see ``frame_vector`` for why).
+对手那一半的 x/facing 取负，让"对手在我左边/右边"在数值上有对称表达；
+坐标系本身锚定 P1，不随朝向翻转（原因见 ``frame_vector``）。
 """
 
 from __future__ import annotations
@@ -54,11 +53,11 @@ FRAME_DIM = STATE_DIM
 OBS_DIM = STATE_DIM * FRAME_STACK
 
 
-# ---------------------------------------------------------------- layout description
+# ---------------------------------------------------------------- 布局描述
 
 
 def feature_layout() -> list[str]:
-    """Return the name of each dim of the single-frame vector (for ONNX export / debugging)."""
+    """返回单帧向量每一维的名字（导出 ONNX / 调试用）。"""
     names: list[str] = []
     for who in ("self", "opp"):
         names += [
@@ -69,11 +68,16 @@ def feature_layout() -> list[str]:
             f"{who}_facing",
             f"{who}_hitstun",
             f"{who}_alive",
+            # ★ 让"变身"可判定（见 config.STATE_DIM_PER_PLAYER 的说明）★
+            f"{who}_forms",
+            f"{who}_can_wankai",
+            # ★ 离变身门槛还差多少（0 = 气够 300）★
+            f"{who}_qi_gap",
         ]
     names += ["dx", "dy", "hp_diff", "mp_diff"]
     names += [f"self_state_{i}" for i in range(PLAYER_STATE_IDS)]
     names += [f"opp_state_{i}" for i in range(PLAYER_STATE_IDS)]
-    assert len(names) == STATE_DIM, f"layout length {len(names)} != STATE_DIM {STATE_DIM}"
+    assert len(names) == STATE_DIM, f"布局长度 {len(names)} != STATE_DIM {STATE_DIM}"
     return names
 
 
@@ -84,7 +88,7 @@ def stacked_layout() -> list[str]:
 FEATURE_NAMES = feature_layout()
 
 
-# ---------------------------------------------------------------- normalization
+# ---------------------------------------------------------------- 归一化
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -99,11 +103,22 @@ def _one_hot(index: int, size: int = PLAYER_STATE_IDS) -> np.ndarray:
 
 
 def normalize_player(pf: PlayerFrame, mirror: bool = False) -> np.ndarray:
-    """One side's 7 dims. With ``mirror=True`` left/right is flipped (here it is a plain negation, used for the opp slot)."""
+    """一方 10 维。``mirror=True`` 时左右翻转（这里是简单取负，opp 槽位用）。"""
     sign = -1.0 if mirror else 1.0
     facing = 1.0 if pf.facing >= 0 else -1.0
     if mirror:
         facing = -facing
+    # ★ 变身相关的两维：本场已变次数（/2）+ 这个角色能不能变 ★
+    #   没有它们，"气满 300"这一种观测会同时对应"该变身"和"该放超必杀"
+    #   两种相反的标签，模型只能取平均（实测 v2 真机 0/6 变身）。
+    forms = _clamp(float(getattr(pf, "forms_used", 0)) / 2.0, 0.0, 1.0)
+    can_wk = 1.0 if getattr(pf, "can_wankai", False) else 0.0
+    # ★ qi_gap = 离变身门槛还差多少（0 = 已经够 300）★
+    #   为什么需要：v10 离线"变身召回 52.3%"，真机 6 场只有 1 场双变身 ——
+    #   它一变完就把气花在 bisha/bishaUP 上。单帧观测里 `qi` 只告诉你"现在有多少"，
+    #   看不出"再攒 80 点就能变第二次"，所以模型倾向立刻花掉。
+    #   这一维把"还差多少"变成显式输入（见 config.STATE_DIM_PER_PLAYER 的说明）。
+    qi_gap = _clamp((MP_MAX - float(pf.mp)) / MP_MAX, 0.0, 1.0)
     return np.array(
         [
             _clamp(sign * pf.x / (ARENA_WIDTH * 0.5), -1.0, 1.0),
@@ -113,25 +128,23 @@ def normalize_player(pf: PlayerFrame, mirror: bool = False) -> np.ndarray:
             facing,
             1.0 if pf.hitstun > 0 else 0.0,
             1.0 if pf.alive else 0.0,
+            forms,
+            can_wk,
+            qi_gap,
         ],
         dtype=np.float32,
     )
 
 
 def frame_vector(frame: Frame) -> np.ndarray:
-    """Encode one frame of raw read-out into a ``FRAME_DIM`` vector.
+    """把一帧原始读数编码成 ``FRAME_DIM`` 维向量。
 
-    **The coordinate system is anchored to P1** (it does not flip with facing).
-    This matters a lot:
+    **坐标系固定锚定 P1**（不随朝向翻转）。这一点很重要：
 
-    When stacking frames, the same slot must mean the same thing in adjacent
-    frames. If "own facing" were the anchor, the whole observation would flip
-    left/right on the frame where the character turns around, and the same
-    network input dim would sometimes mean "I face right" and sometimes "I face
-    left", which destroys the action-to-state correspondence (training learns
-    garbage). With the anchor on P1, "advance/retreat" is expressed explicitly
-    by the facing dim, and the direction semantics are left for the network to
-    learn on its own.
+    帧堆叠时同一个槽位在相邻帧必须含义相同。如果用"自身朝向"当锚，
+    转身那一帧整条观测会左右翻转，同一个网络输入维度一会儿表示"我朝右"
+    一会儿表示"我朝左"，动作与状态的对应关系就被破坏了（训练会学歪）。
+    锚定 P1 后，"前进/后退"由 facing 这一维显式表达，方向语义交给网络自己学。
     """
     p1, p2 = frame.p1, frame.p2
     self_v = normalize_player(p1, mirror=False)
@@ -146,18 +159,18 @@ def frame_vector(frame: Frame) -> np.ndarray:
     vec = np.concatenate(
         [self_v, opp_v, rel, _one_hot(p1.state), _one_hot(p2.state)]
     ).astype(np.float32)
-    assert vec.shape[0] == FRAME_DIM, f"vector dim {vec.shape[0]} != FRAME_DIM {FRAME_DIM}"
+    assert vec.shape[0] == FRAME_DIM, f"向量维度 {vec.shape[0]} != FRAME_DIM {FRAME_DIM}"
     return vec
 
 
-# ---------------------------------------------------------------- state wrapper
+# ---------------------------------------------------------------- 状态封装器
 
 
 @dataclass
 class StateSnapshot:
-    """One frame of state with history (for the inference / collection loops)."""
+    """带历史的一帧状态（给推理/采集循环用）。"""
 
-    obs: np.ndarray  # flattened stacked observation, shape=(OBS_DIM,)
+    obs: np.ndarray  # 展平后的 stacked 观测，shape=(OBS_DIM,)
     frames: np.ndarray  # shape=(FRAME_STACK, FRAME_DIM)
     raw: Frame
     valid: bool = True
@@ -172,10 +185,9 @@ class StateSnapshot:
 
 
 class StateBuilder:
-    """Frame stacking: concatenates ``FRAME_STACK`` frames of raw read-out into the network input.
+    """帧堆叠：把 ``FRAME_STACK`` 帧原始读数拼成网络输入。
 
-    An MLP cannot see velocity, so stacking 2 frames is enough; the velocity /
-    hitstun kind of temporal information is all in there.
+    MLP 看不到速度，堆 2 帧就够了；速度/受击硬直这类时序信息都在里面。
     """
 
     def __init__(self, stack: int = FRAME_STACK) -> None:
@@ -199,13 +211,13 @@ class StateBuilder:
             valid=frame.valid,
         )
 
-    # convenience: when only the observation matters
+    # 便捷：只关心观测时
     def observe(self, frame: Frame) -> np.ndarray:
         return self.push(frame).obs
 
 
 def observation_from_frames(frames: Iterable[Frame], stack: int = FRAME_STACK) -> np.ndarray:
-    """Offline use: compute one observation from several frames (zero-padded at the front when short)."""
+    """离线用：从若干帧算一条观测（不足则前面补零）。"""
     vecs = [frame_vector(f) for f in frames]
     while len(vecs) < stack:
         vecs.insert(0, np.zeros(FRAME_DIM, dtype=np.float32))
@@ -213,7 +225,7 @@ def observation_from_frames(frames: Iterable[Frame], stack: int = FRAME_STACK) -
     return np.stack(vecs, axis=0).reshape(-1).astype(np.float32)
 
 
-# ---------------------------------------------------------------- reward
+# ---------------------------------------------------------------- 奖励
 
 ROUND_END_HP = 0.0
 
@@ -227,34 +239,29 @@ def compute_reward(
     lose: float = REWARD_LOSE,
     per_frame: float = REWARD_PER_FRAME,
 ) -> float:
-    """Hit +1 / getting hit -1 / win +10 / lose -10 / -0.001 per frame.
+    """命中 +1 / 被击 -1 / 获胜 +10 / 失败 -10 / 每帧 -0.001。
 
-    Losing hp means "got hit". If a lot of hp is lost in a single frame, estimate
-    it by count (here it is scaled proportionally, because the attack events are
-    usually not readable from memory and can only be inferred from the hp delta).
+    hp 减少即为"被打中"。若一帧内扣血很多，按次数估算（这里按比例折算，
+    因为内存里通常读不到攻击事件，只能靠血量差推断）。
     """
     reward = per_frame
     dealt = max(0.0, prev.p2.hp - curr.p2.hp)
     taken = max(0.0, prev.p1.hp - curr.p1.hp)
-    # The reward is **proportional to the damage dealt**; do not use a
-    # max(1.0, ...) floor.
+    # 奖励与**伤害量成正比**，不要用 max(1.0, ...) 的下限。
     #
-    # The old `hit * max(1.0, dealt/100)` had a fatal bias:
-    # **hitting for 30 hp gave +1, hitting for 100 hp also gave only +1** -- small
-    # damage was over-rewarded, so the policy preferred "land a few small pokes"
-    # over "land high damage".
-    # Measured evidence: the policy learned by 60 minutes of online DQN switched
-    # its mainstays to
-    #   airAttack 24% + airBisha 12% (frequently triggering air moves),
-    # while the real mainstays catch1(34%)/zhao1(15%) dropped out of the lead,
-    # and the episode reward **did not improve at all** (first 12 rounds -31.6 /
-    # last 12 rounds -31.9).
+    # 原来的 `hit * max(1.0, dealt/100)` 有个致命偏差：
+    # **打中 30 血给 +1，打中 100 血也只给 +1** —— 小伤害被过度奖励，
+    # 策略会倾向"多打几下小的"而不是"打出高伤害"。
+    # 实测证据：60 分钟在线 DQN 学出来的策略把主力换成了
+    #   airAttack 24% + airBisha 12%（触发频繁的空中招），
+    # 而真正主力 catch1(34%)/zhao1(15%) 掉出前列，
+    # episode 奖励却**完全没改善**（前 12 局 -31.6 / 后 12 局 -31.9）。
     if dealt > 0:
         reward += hit * (dealt / 100.0)
     if taken > 0:
         reward += hurt * (taken / 100.0)
 
-    # round end check
+    # 回合结束判定
     prev_alive = prev.p1.hp > ROUND_END_HP and prev.p2.hp > ROUND_END_HP
     if prev_alive:
         if curr.p2.hp <= ROUND_END_HP and curr.p1.hp > ROUND_END_HP:
@@ -266,7 +273,7 @@ def compute_reward(
 
 @dataclass
 class Transition:
-    """One training sample."""
+    """一条训练样本。"""
 
     obs: np.ndarray
     action: int
@@ -286,7 +293,7 @@ class Transition:
         }
 
 
-# ---------------------------------------------------------------- self-test
+# ---------------------------------------------------------------- 自检
 
 if __name__ == "__main__":
     from memory_reader import PlayerFrame as PF
@@ -306,4 +313,4 @@ if __name__ == "__main__":
         p1=PF(x=-90, y=0, hp=800, mp=31, state=4, facing=1),
         p2=PF(x=150, y=0, hp=650 - 80, mp=10, state=5, facing=-1),
     )
-    print("reward(hit the opponent for 80 hp) =", compute_reward(demo, nxt))
+    print("reward(打中对手 80 血) =", compute_reward(demo, nxt))

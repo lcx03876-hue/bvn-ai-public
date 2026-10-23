@@ -1,27 +1,24 @@
-"""Inject the state-export code into GameCtrler.as, then use FFDec to put it back into the SWF.
+"""把状态导出代码注入 GameCtrler.as，再用 FFDec 替换回 SWF。
 
-Why this way (instead of hand-editing the 765-line decompiled file):
-  * Re-runnable, reproducible -- once the decompiled output is regenerated it can be
-    redone with a single command
-  * Only one script is touched, avoiding the hassle of "adding a new class"
-    (adding new classes with the FFDec CLI is very awkward)
+为什么这么做（而不是手改 765 行的反编译文件）：
+  * 可重跑、可复现 —— 反编译产物重新生成后也能一键重做
+  * 只动一个脚本，避免"新增类"的麻烦（FFDec CLI 加新类很别扭）
 
-Injection point: `GameCtrler.render()` -- in the source this is the method that
-**runs every frame** (it calls renderPause / gameStage.render / _mainLogicCtrler.render).
+注入点：`GameCtrler.render()` —— 源码里这是**每帧都跑**的方法
+（它调用 renderPause / gameStage.render / _mainLogicCtrler.render）。
 
-Exported contents (one JSON file written per frame, read by polling on the Python side):
-  hp, hpMax, qi, energy, x, y, actionState, isInAir, isAlive, scaleX of p1/p2
+导出内容（每帧写一个 JSON 文件，Python 侧轮询读）：
+  p1/p2 的 hp, hpMax, qi, energy, x, y, actionState, isInAir, isAlive, scaleX
 
-Why a **file** instead of a Socket:
-  This is an Adobe AIR application, `flash.filesystem.File` is available directly,
-  it is simpler than opening a port, never collides with a port, and a dead process
-  does not leave a half-open connection behind.
-  At 30Hz writing one small file, the overhead on an SSD is negligible.
+为什么用**文件**而不是 Socket：
+  这是 Adobe AIR 应用，`flash.filesystem.File` 直接可用，
+  比开端口简单、不会撞端口、进程挂了也不留半开连接。
+  帧率 30Hz 写一个小文件，SSD 上开销可忽略。
 
-Usage::
-    python build_bridge.py --dry-run     # only generate the injected .as, do not touch the SWF
-    python build_bridge.py               # generate + call FFDec to produce the patched SWF
-    python build_bridge.py --restore     # restore the original SWF from the backup
+用法::
+    python build_bridge.py --dry-run     # 只生成注入后的 .as，不动 SWF
+    python build_bridge.py               # 生成 + 调 FFDec 产出打过补丁的 SWF
+    python build_bridge.py --restore     # 从备份还原原始 SWF
 """
 
 from __future__ import annotations
@@ -33,64 +30,38 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-# Resolved from the BVN_GAME_DIR env var, or ./game
-from bvn_paths import game_dir as _game_dir_resolve
-
-def _resolve_game_dir():
-    """Resolve this path on demand, so --help works without the game."""
-    return _game_dir_resolve()
-
-
-def _swf_in() -> Path:
-    """Lazily resolve the installed SWF to patch."""
-    return _resolve_game_dir() / "FighterTester.swf"
-
-def _swf_bak() -> Path:
-    """Lazily resolve the pristine backup of it."""
-    return _resolve_game_dir() / "FighterTester.swf.orig"
-
-def _swf_out() -> Path:
-    """Lazily resolve the bridge output SWF."""
-    return _resolve_game_dir() / "FighterTester.bridge.swf"
-
-
-
-# Resolved from the FFDEC env var, or the usual install locations.
-from bvn_paths import ffdec as _ffdec_resolve
-FFDEC = _ffdec_resolve()
+GAME_DIR = Path(r"C:\Users\31673\Downloads\swf_output\swf_output")
+SWF_IN = GAME_DIR / "FighterTester.swf"
+SWF_BAK = GAME_DIR / "FighterTester.swf.orig"
+SWF_OUT = GAME_DIR / "FighterTester.bridge.swf"
+FFDEC = Path(r"C:\Program Files (x86)\FFDec\ffdec-cli.exe")
 
 SRC_AS = (ROOT / "decompiled_main" / "scripts" / "net" / "play5d" / "game"
           / "obvn" / "ctrler" / "game_ctrler" / "GameCtrler.as")
 PATCHED_AS = ROOT / "bridge" / "GameCtrler.bridge.as"
 
 SCRIPT_NAME = "net.play5d.game.obvn.ctrler.game_ctrler.GameCtrler"
-# The second script that has to be modified: the action controller is hidden inside a
-# private field of FighterMcCtrler, and a public getter is needed before the bridge can
-# tell whether "this side is the AI".
+# 第二个要改的脚本：动作控制器藏在 FighterMcCtrler 的 private 字段里，
+# 需要一个 public getter 才能从桥接里判断"这一方是不是 AI"。
 MC_SRC_AS = (ROOT / "decompiled_main" / "scripts" / "net" / "play5d" / "game"
              / "obvn" / "fighter" / "ctrler" / "FighterMcCtrler.as")
 MC_PATCHED_AS = ROOT / "bridge" / "FighterMcCtrler.bridge.as"
 MC_SCRIPT_NAME = "net.play5d.game.obvn.fighter.ctrler.FighterMcCtrler"
 
-# Export file path (hard-coded in AS3, the Python side reads the same one)
-# Absolute path of the bridge JSON, escaped for ActionScript.
-# Resolved from BVN_RUNS_DIR (default: <repo>/runs).
-from bvn_paths import state_path_as3 as _state_path_as3
-STATE_PATH_AS3 = _state_path_as3()
+# 导出文件路径（AS3 里写死，Python 侧读同一个）
+STATE_PATH_AS3 = r"C:\\deepseek\\bvn-ai\\runs\\bvn_state.json"
 
 EXPORT_METHOD = '''
-      // ==================== state-export bridge (injected code, not original) ====================
-      // Every frame, write both sides' state into one JSON file; the Python side polls it.
-      // This bypasses memory scanning completely: no worrying about AS3's GC moving
-      // addresses around, and no guessing which one of a pile of identically-shaped
-      // clone objects is the live one.
+      // ==================== 状态导出桥接（注入代码，非原版）====================
+      // 每帧把双方状态写成一个 JSON 文件，Python 侧轮询读取。
+      // 这样完全绕开内存扫描：不用担心 AS3 的 GC 换地址、
+      // 也不用在一堆同结构的克隆对象里猜哪个是活的。
       private static var _bvnFrame:int = 0;
-      // ★ match-start detection (requested by the user) ★
-      //   `_bvnAeFrame` = frame number of the most recent actionEnable false->true;
-      //   `_bvnPrevAe`  = actionEnable of the previous frame, used to catch the jump.
-      //   Once `aeFrames` (round age) is exported, the controller can force
-      //   "release all keys + press again" the instant the round starts, avoiding
-      //   "standing still at match start".
+      // ★ 开局检测（用户要求）★
+      //   `_bvnAeFrame` = actionEnable 最近一次 false->true 的帧号；
+      //   `_bvnPrevAe`  = 上一帧的 actionEnable，用来抓跳变。
+      //   导出 `aeFrames`（回合年龄）后，控制器就能在回合刚开的瞬间
+      //   强制"松开所有键 + 重按"，避免「开局站着不动」。
       private static var _bvnAeFrame:int = 0;
       private static var _bvnPrevAe:Boolean = false;
       private static var _bvnFile:File = null;
@@ -113,8 +84,8 @@ EXPORT_METHOD = '''
             out += ",\\"x\\":" + param1.x;
             out += ",\\"y\\":" + param1.y;
             out += ",\\"actionState\\":" + param1.actionState;
-            // The facing field is called direct (BaseGameSprite._direct, has a public getter),
-            // **not facing** -- looking for it under the name facing finds nothing
+            // 朝向字段叫 direct（BaseGameSprite._direct，有 public getter），
+            // **不叫 facing** —— 之前按 facing 找是找不到的
             out += ",\\"direct\\":" + param1.direct;
             out += ",\\"heavy\\":" + param1.heavy;
             out += ",\\"defense\\":" + param1.defense;
@@ -131,11 +102,10 @@ EXPORT_METHOD = '''
 
       private function bvnCharId(param1:Object) : String
       {
-         // ★ character id (e.g. "ichigo" / "naruto" / "pain") ★
-         // Why it is needed: I kept **watching the screen** to guess "which side is Ichigo",
-         // but Ichigo and Naruto both have orange hair -> I got it wrong. Reading the data
-         // is the most reliable. Basis: LoadingStage.as also reads the character id
-         // with `param1.data.id`.
+         // ★ 角色 id（如 "ichigo" / "naruto" / "pain"）★
+         // 为什么要它：我一直靠**看画面**猜"哪一方是一护"，
+         // 但一护和鸣人都是橙色头发 -> 认错过。读数据最可靠。
+         // 依据：LoadingStage.as 里就是用 `param1.data.id` 取角色 id 的。
          if(param1 == null)
          {
             return "null";
@@ -157,7 +127,7 @@ EXPORT_METHOD = '''
 
       private function bvnHasWankai(param1:Object) : String
       {
-         // FighterMain.hasWankai() -> does the MC contain a "Bankai" frame
+         // FighterMain.hasWankai() -> MC 里有没有 "万解" 帧
          if(param1 == null)
          {
             return "false";
@@ -183,16 +153,16 @@ EXPORT_METHOD = '''
 
       private function bvnFzId(param1:Object) : String
       {
-         // assister id: GameRunFighterGroup.fuzhu
+         // 辅助 id：GameRunFighterGroup.fuzhu
          if(param1 == null)
          {
             return "null";
          }
          try
          {
-            // ⚠️ `GameRunFighterGroup.fuzhu` is an **Assister object**, not a string.
-            //    Measured: reading it directly gives "[object Assister]".
-            //    `Assister` has `public var data:FighterVO`, so the id lives in `data.id`.
+            // ⚠️ `GameRunFighterGroup.fuzhu` 是 **Assister 对象**，不是字符串。
+            //    实测直接取它会得到 "[object Assister]"。
+            //    `Assister` 有 `public var data:FighterVO`，所以 id 在 `data.id`。
             var bvnDt:Object = param1.data;
             if(bvnDt == null)
             {
@@ -208,15 +178,14 @@ EXPORT_METHOD = '''
 
       private function bvnIsAI(param1:Object) : String
       {
-         // ★ deterministic criterion: follow getCtrler().getMcCtrl().getActionCtrler()
-         //   to the real action controller, then check whether it is a FighterAICtrler ★
+         // ★ 确定性判据：沿 getCtrler().getMcCtrl().getActionCtrler() 拿到
+         //   真正的动作控制器，再看它是不是 FighterAICtrler ★
          //
-         // Pitfall I hit: `fighter.getCtrler()` returns a **FighterCtrler** (not the action
-         // controller), so writing `getCtrler() is FighterAICtrler` directly is
-         // **always false**.
-         // The action controller lives in FighterCtrler._fighterMcCtrler._actionCtrler,
-         // and FighterMcCtrler originally **had no public getter** --
-         // so build_bridge also has to add a getActionCtrler() to FighterMcCtrler.
+         // 踩过的坑：`fighter.getCtrler()` 返回的是 **FighterCtrler**（不是动作控制器），
+         // 直接写 `getCtrler() is FighterAICtrler` **永远为 false**。
+         // 动作控制器存在 FighterCtrler._fighterMcCtrler._actionCtrler 里，
+         // 而 FighterMcCtrler 原本**没有 public getter** ——
+         // 所以 build_bridge 还得给 FighterMcCtrler 补一个 getActionCtrler()。
          if(param1 == null)
          {
             return "null";
@@ -249,7 +218,7 @@ EXPORT_METHOD = '''
       private function bvnExportState() : void
       {
          _bvnFrame++;
-         // ★ match-start detection: catch the false->true jump of actionEnable ★
+         // ★ 开局检测：抓 actionEnable 的 false->true 跳变 ★
          if(actionEnable && !_bvnPrevAe)
          {
             _bvnAeFrame = _bvnFrame;
@@ -257,7 +226,7 @@ EXPORT_METHOD = '''
          _bvnPrevAe = actionEnable;
          if(_bvnFrame % 2 != 0)
          {
-            return;                      // about 30Hz, enough for the AI, saves IO
+            return;                      // 约 30Hz，够 AI 用，省 IO
          }
          try
          {
@@ -276,47 +245,41 @@ EXPORT_METHOD = '''
             }
             var s:String = "{\\"frame\\":" + _bvnFrame
                + ",\\"actionEnable\\":" + (actionEnable ? "true" : "false")
-            // ★ match-start detection fields (requested by the user) ★
-            //   aeFrame  = the game frame at which control last became available
-            //   aeFrames = how many frames have passed since then (-1 = not controllable right now)
-            //   roundNo  = which round this is (best of three, first to 2 wins)
+            // ★ 开局检测字段（用户要求）★
+            //   aeFrame  = 最近一次可操作的起始游戏帧
+            //   aeFrames = 距那次过了几帧（-1 = 当前不可操作）
+            //   roundNo  = 第几小局（三局两胜，先到 2 胜）
             + ",\\"aeFrame\\":" + _bvnAeFrame
             + ",\\"aeFrames\\":" + (actionEnable ? (_bvnFrame - _bvnAeFrame) : -1)
             + ",\\"roundNo\\":" + (gameRunData != null ? (gameRunData.p1Wins + gameRunData.p2Wins + 1) : -1)
-               // runtime AI level -- used to confirm whether set_difficulty actually took effect.
-               // config.AI_level = the one hard-coded in FighterTester;
-               // MessionModel.AI_LEVEL = the one actually passed into FighterAICtrler (assigned at character select).
-               // Game build, straight from the game: MainGame.VERSION is
-            // "V3.x 开放BVN" on the build this project targets. Recorded in
-            // every snapshot so a result can always be tied to a game build.
-            // bvnQuoted is the existing string quoter defined above.
-            + ",\\"gameVer\\":" + bvnQuoted(MainGame.VERSION)
-            + ",\\"aiLevel\\":" + GameData.I.config.AI_level
+               // 运行时 AI 等级 —— 用来确认 set_difficulty 到底生效没有。
+               // config.AI_level = FighterTester 里硬编码那个；
+               // MessionModel.AI_LEVEL = 真正传进 FighterAICtrler 那个（选角时赋值）。
+               + ",\\"aiLevel\\":" + GameData.I.config.AI_level
                + ",\\"aiModel\\":" + MessionModel.I.AI_LEVEL
                + ",\\"mode\\":" + GameMode.currentMode
-               // ★ the official best-of-three score ★
-               //   GameCtrler.runNext(): only buildNextRound if(p1Wins < 2 && p2Wins < 2)
-               //   => the whole match ends only once someone reaches 2 wins. Deciding whether
-               //   "the whole match is over" must look at these two, do not guess.
+               // ★ 三局两胜的官方比分 ★
+               //   GameCtrler.runNext(): if(p1Wins < 2 && p2Wins < 2) 才 buildNextRound
+               //   => 先到 2 胜整场才结束。判断"整场是否结束"必须看这两个，别靠猜。
                + ",\\"p1Wins\\":" + gameRunData.p1Wins
                + ",\\"p2Wins\\":" + gameRunData.p2Wins
-               // ★ each side's controller type (is it an AI) -- hard evidence for mode detection ★
-               // ★ whether it can transform (Bankai) ★ -- used to verify that the "transform" action took effect
+               // ★ 两方各自的控制器类型（是不是 AI）—— 模式检测的硬证据 ★
+               // ★ 能不能变身（万解）★ —— 用来验证"变身"这条动作有没有生效
                + ",\\"p1Wankai\\":" + bvnHasWankai(p1)
                + ",\\"p2Wankai\\":" + bvnHasWankai(p2)
                + ",\\"p1IsAI\\":" + bvnIsAI(p1)
                + ",\\"p2IsAI\\":" + bvnIsAI(p2)
-               // ★ character id -- stop guessing from the picture (from the picture I mistook Pain for Ichigo) ★
+               // ★ 角色 id —— 别再靠看画面猜了（看画面我把佩恩认成了一护）★
                + ",\\"p1Id\\":" + bvnCharId(p1)
                + ",\\"p2Id\\":" + bvnCharId(p2)
-               // ★ assister id (2026-10-15) ★
-               //   Why: measured, the panel once wrote the assister value into a character slot
-               //   (player 1 character id = kon), and the bridge originally **did not export the
-               //   assister id**, so that kind of error went undetected and the match started anyway.
-               //   Source: `GameRunFighterGroup.fuzhu` (the authoritative runtime value).
+               // ★ 辅助 id（2026-10-15）★
+               //   为什么要：实测面板曾把辅助值写进角色位
+               //   （玩家1 角色id = kon），而桥接原来**不导出辅助 id**，
+               //   所以这种错误没被发现就直接开局了。
+               //   来源 `GameRunFighterGroup.fuzhu`（运行时权威值）。
                + ",\\"p1Fz\\":" + bvnFzId(gameRunData.p1FighterGroup)
                + ",\\"p2Fz\\":" + bvnFzId(gameRunData.p2FighterGroup)
-               // raw character-select VO values (the copy the panel wrote in, used for cross-checking)
+               // 选角 VO 的原始值（面板写进去的那份，用于交叉核对）
                + ",\\"p1Sel\\":" + bvnQuoted(GameData.I.p1Select
                   ? GameData.I.p1Select.fuzhu : "")
                + ",\\"p2Sel\\":" + bvnQuoted(GameData.I.p2Select
@@ -338,10 +301,10 @@ EXPORT_METHOD = '''
          }
          catch(bvnErr2:Error)
          {
-            // an export failure must never affect the game itself, swallow it silently
+            // 导出失败绝不能影响游戏本体，静默吞掉
          }
       }
-      // ================== end of state-export bridge ==================
+      // ================== 状态导出桥接结束 ==================
 '''
 
 IMPORT_ADD = """      import flash.filesystem.File;
@@ -351,81 +314,81 @@ IMPORT_ADD = """      import flash.filesystem.File;
 
 
 def patch_source(src: str) -> str:
-    """Insert the bvnExportState() call at the start of render(), and append the export methods."""
-    # 1) add the imports (after the first import)
+    """在 render() 开头插入 bvnExportState() 调用，并追加导出方法。"""
+    # 1) 加 import（在第一个 import 后面）
     lines = src.splitlines(keepends=True)
     insert_at = 0
     for i, ln in enumerate(lines):
         if ln.strip().startswith("import "):
             insert_at = i + 1
-    # avoid injecting twice
+    # 避免重复注入
     if "bvnExportState" in src:
-        raise SystemExit("the source already contains bvnExportState -- it looks like it was already injected")
+        raise SystemExit("源码里已经有 bvnExportState —— 似乎已经注入过了")
     lines.insert(insert_at, IMPORT_ADD)
     src = "".join(lines)
 
-    # 2) insert the call at the start of render()
+    # 2) 在 render() 开头插入调用
     marker = "private function render() : void\n      {\n"
     if marker not in src:
-        # tolerate different line endings/indentation
+        # 兼容不同的换行/缩进
         marker = "private function render() : void\r\n      {\r\n"
     if marker not in src:
-        raise SystemExit("cannot find the start of render(), nothing to inject -- check the decompiled output")
+        raise SystemExit("找不到 render() 的开头，无法注入 —— 检查反编译产物")
     call = marker + "         bvnExportState();\n"
     src = src.replace(marker, call, 1)
 
-    # 3) append the export methods.
+    # 3) 追加导出方法。
     #
-    # **mind the insertion point**: the end of the file looks like this (the indentation gives it away):
-    #       }        <- end of the last getter/setter
-    #    }           <- **end of class** (3-space indent)
-    # }              <- end of package (0 indent)
-    # So the last `}` ends the **package**, and the second-to-last one ends the **class**.
-    # At first I inserted before the last `}`, so the methods ended up outside the class and
-    # FFDec reported "private not expected in this situation" straight away.
+    # **注意插入位置**：文件结尾长这样（缩进能看出来）：
+    #       }        <- 最后一个 getter/setter 结束
+    #    }           <- **类结束**（缩进 3 空格）
+    # }              <- 包结束（缩进 0）
+    # 所以最后一个 `}` 是**包**的结束，倒数第二个才是**类**的结束。
+    # 一开始我插在最后一个 `}` 之前，结果方法落在类外面，
+    # FFDec 直接报 "private not expected in this situation"。
     method = EXPORT_METHOD.replace("PATH_PLACEHOLDER", STATE_PATH_AS3)
     stripped = src.rstrip()
     if not stripped.endswith("}"):
-        raise SystemExit("the file does not end with }, cannot inject safely")
-    # strip the package-closing }
+        raise SystemExit("文件不是以 } 结尾，无法安全注入")
+    # 剥掉包结束的 }
     body = stripped[:-1].rstrip()
     if not body.endswith("}"):
-        raise SystemExit("after stripping the package brace it no longer ends with }, the structure is not what we expect")
-    # now the last } of body closes the class -- insert before it
+        raise SystemExit("剥掉包括号后不是以 } 结尾，结构不符预期")
+    # 现在 body 的最后一个 } 是类结束 —— 在它之前插入
     idx = body.rfind("}")
     src = body[:idx] + method + "\n" + body[idx:] + "\n}\n"
     return src
 
 
 def patch_mc_source(src: str) -> str:
-    """Add a public getActionCtrler() to FighterMcCtrler.
+    """给 FighterMcCtrler 补一个 public getActionCtrler()。
 
-    Why it is needed:
-      `FighterMain.getCtrler()` returns a **FighterCtrler** (not the action controller),
-      the real action controller is `FighterCtrler._fighterMcCtrler._actionCtrler`,
-      and `_actionCtrler` is **private** -- the bridge code cannot read it,
-      so `p1IsAI/p2IsAI` could only ever be false (that is exactly how my first version got it wrong).
+    为什么需要：
+      `FighterMain.getCtrler()` 返回的是 **FighterCtrler**（不是动作控制器），
+      真正的动作控制器是 `FighterCtrler._fighterMcCtrler._actionCtrler`，
+      而 `_actionCtrler` 是 **private** —— 桥接代码读不到它，
+      于是 `p1IsAI/p2IsAI` 只能恒为 false（我第一版就是这么错的）。
 
-    Insertion point: after `setActionCtrler` (in the same class, writing it immediately after is safest).
+    插入位置：`setActionCtrler` 后面（同类里，紧跟着写最安全）。
     """
     if "getActionCtrler" in src:
-        raise SystemExit("the source already contains getActionCtrler -- it looks like it was already injected")
+        raise SystemExit("源码里已经有 getActionCtrler —— 似乎已经注入过了")
 
     marker = "public function setActionCtrler(param1:IFighterActionCtrler) : void"
     idx = src.find(marker)
     if idx < 0:
-        raise SystemExit("cannot find setActionCtrler, so the insertion point is unknown")
-    # find the end of this method body (the next "      }") -- a } inside the method body is
-    # indented deeper, so search forward from the marker for the first "}" with exactly 6 leading spaces
+        raise SystemExit("找不到 setActionCtrler，无法确定插入位置")
+    # 找到这个方法体的结束（下一个 "      }" ）—— 方法体内部的 } 缩进更深，
+    # 所以从 marker 往后找第一个行首恰好 6 个空格的 "}"
     end = src.find("\n      }", idx)
     if end < 0:
-        raise SystemExit("cannot find the end of setActionCtrler")
+        raise SystemExit("找不到 setActionCtrler 的结尾")
     end += len("\n      }")
 
     getter = (
         "\n      \n"
-        "      // ===== for the bridge: expose the action controller (injected code, not original) =====\n"
-        "      // The bridge uses it to decide [whether this side is the keyboard or an AI]:\n"
+        "      // ===== 桥接用：暴露动作控制器（注入代码，非原版）=====\n"
+        "      // 桥接靠它判断【这一方是键盘还是 AI】：\n"
         "      //   fighter.getCtrler().getMcCtrl().getActionCtrler() is FighterAICtrler\n"
         "      public function getActionCtrler() : IFighterActionCtrler\n"
         "      {\n"
@@ -436,48 +399,44 @@ def patch_mc_source(src: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="build the state-export bridge SWF")
+    parser = argparse.ArgumentParser(description="构建状态导出桥接 SWF")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--restore", action="store_true")
-    # default=None: resolving the real paths here would run while the parser is
-    # being built, i.e. before --help is handled, so the script could not print
-    # usage on a machine without the game installed.
-    parser.add_argument("--swf-in", default=None)
-    parser.add_argument("--swf-out", default=None)
+    parser.add_argument("--swf-in", default=str(SWF_IN))
+    parser.add_argument("--swf-out", default=str(SWF_OUT))
     args = parser.parse_args(argv)
 
-    swf_in = Path(args.swf_in) if args.swf_in else _swf_in()
-    swf_out = Path(args.swf_out) if args.swf_out else _swf_out()
+    swf_in, swf_out = Path(args.swf_in), Path(args.swf_out)
 
     if args.restore:
-        if not _swf_bak().exists():
-            print(f"no backup at {_swf_bak()}")
+        if not SWF_BAK.exists():
+            print(f"没有备份 {SWF_BAK}")
             return 1
-        shutil.copy2(_swf_bak(), swf_in)
-        print(f"restored {swf_in} from the backup")
+        shutil.copy2(SWF_BAK, swf_in)
+        print(f"已从备份还原 {swf_in}")
         return 0
 
     if not SRC_AS.exists():
-        print(f"decompiled source not found: {SRC_AS}")
+        print(f"找不到反编译源码 {SRC_AS}")
         return 2
     if not FFDEC.exists():
-        print(f"FFDec CLI not found: {FFDEC}")
+        print(f"找不到 FFDec CLI: {FFDEC}")
         return 2
     if not swf_in.exists():
-        print(f"SWF not found: {swf_in}")
+        print(f"找不到 SWF: {swf_in}")
         return 2
 
-    print(f"[bridge] reading source {SRC_AS.name}")
+    print(f"[bridge] 读源码 {SRC_AS.name}")
     src = SRC_AS.read_text(encoding="utf-8", errors="replace")
     patched = patch_source(src)
 
     PATCHED_AS.parent.mkdir(parents=True, exist_ok=True)
     PATCHED_AS.write_text(patched, encoding="utf-8")
-    print(f"[bridge] wrote the injected source {PATCHED_AS}")
-    print(f"[bridge]   grew by {len(patched) - len(src)} bytes")
+    print(f"[bridge] 已写注入后的源码 {PATCHED_AS}")
+    print(f"[bridge]   加长了 {len(patched) - len(src)} 字节")
 
-    # second patch: add a public getActionCtrler() to FighterMcCtrler
-    # without it there is no way to get "is _actionCtrler the keyboard or an AI", and p1IsAI/p2IsAI stay false forever.
+    # 第二个补丁：FighterMcCtrler 加 public getActionCtrler()
+    # 没有它就拿不到"_actionCtrler 到底是键盘还是 AI"，p1IsAI/p2IsAI 会恒为 false。
     mc_patched = None
     if MC_SRC_AS.exists():
         mc_src = MC_SRC_AS.read_text(encoding="utf-8", errors="replace")
@@ -485,51 +444,50 @@ def main(argv: list[str] | None = None) -> int:
             mc_patched = patch_mc_source(mc_src)
             MC_PATCHED_AS.parent.mkdir(parents=True, exist_ok=True)
             MC_PATCHED_AS.write_text(mc_patched, encoding="utf-8")
-            print(f"[bridge] wrote the injected source {MC_PATCHED_AS}")
+            print(f"[bridge] 已写注入后的源码 {MC_PATCHED_AS}")
         except SystemExit as exc:
-            print(f"[bridge] ⚠️ FighterMcCtrler patch skipped: {exc}")
+            print(f"[bridge] ⚠️ FighterMcCtrler 补丁跳过：{exc}")
             mc_patched = None
     else:
-        print(f"[bridge] ⚠️ {MC_SRC_AS} not found, p1IsAI/p2IsAI will not get real values")
+        print(f"[bridge] ⚠️ 找不到 {MC_SRC_AS}，p1IsAI/p2IsAI 会拿不到真实值")
 
     if args.dry_run:
-        print("[bridge] --dry-run, leaving the SWF alone")
+        print("[bridge] --dry-run，不动 SWF")
         return 0
 
-    # back up the original SWF (back up only once, so a patched build is never mistaken for the original)
-    if not _swf_bak().exists():
-        shutil.copy2(swf_in, _swf_bak())
-        print(f"[bridge] backed up the original SWF -> {_swf_bak()}")
+    # 备份原始 SWF（只备份一次，避免把打过补丁的当成原始）
+    if not SWF_BAK.exists():
+        shutil.copy2(swf_in, SWF_BAK)
+        print(f"[bridge] 已备份原始 SWF -> {SWF_BAK}")
 
     cmds: list[list[str]] = [
         [str(FFDEC), "-replace", str(swf_in), str(swf_out),
          SCRIPT_NAME, str(PATCHED_AS)]
     ]
     if mc_patched is not None:
-        # ★ note: the second replacement has to work from **the output of the first replacement** ★
-        # FFDec can only replace one script at a time; doing it in two steps means passing
-        # the previous step's output along.
+        # ★ 注意：第二次替换要基于**已经替换过一次的产物** ★
+        # FFDec 一次只能替换一个脚本；分两步要传上一步的输出。
         cmds.append([str(FFDEC), "-replace", str(swf_out), str(swf_out),
                      MC_SCRIPT_NAME, str(MC_PATCHED_AS)])
 
     for i, cmd in enumerate(cmds):
-        print(f"[bridge] calling FFDec to replace scripts (step {i + 1}/{len(cmds)})...")
+        print(f"[bridge] 调用 FFDec 替换脚本（第 {i + 1}/{len(cmds)} 步）...")
         print("  " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if proc.returncode != 0:
-            print(f"[bridge] FFDec failed (returned {proc.returncode})")
+            print(f"[bridge] FFDec 失败（返回 {proc.returncode}）")
             print(proc.stdout[-2000:])
             print(proc.stderr[-2000:])
             return 1
         print((proc.stdout or "")[-400:])
         if not swf_out.exists():
-            print("[bridge] FFDec produced no file")
+            print("[bridge] FFDec 没产出文件")
             return 1
-    print(f"[bridge] ✅ produced {swf_out} ({swf_out.stat().st_size} bytes)")
-    print(f"\n[bridge] next steps:")
-    print(f"  1. close the game")
-    print(f"  2. back up FighterTester.swf, then rename {swf_out.name} to FighterTester.swf")
-    print(f"  3. launch the game, enter a match, and run: python read_bridge.py")
+    print(f"[bridge] ✅ 产出 {swf_out} ({swf_out.stat().st_size} 字节)")
+    print(f"\n[bridge] 下一步：")
+    print(f"  1. 关掉游戏")
+    print(f"  2. 备份 FighterTester.swf，把 {swf_out.name} 改名成 FighterTester.swf")
+    print(f"  3. 启动游戏，进对局，跑：python read_bridge.py")
     return 0
 
 

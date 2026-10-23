@@ -1,16 +1,15 @@
-"""Supplementary metrics: **moves fired per round / average damage per move / output efficiency**.
+"""补充指标：**每局发招次数 / 平均每次伤害 / 输出效率**。
 
-Motivation: `analyze_rounds.py` shows a round takes **172~211 seconds** to burn
-through 2000 HP (≈10 damage/sec). That efficiency is suspiciously low — we need
-to know "is it firing too few moves, or are the fired moves not connecting, or
-does it just stop after landing one".
+动机：`analyze_rounds.py` 显示一局要 **172~211 秒**才打完 2000 血
+（≈10 伤害/秒）。这个效率低得可疑 —— 需要知道"是发招太少，
+还是发了招打不中，还是打完就停"。
 
-Three numbers:
-  1. **Move-fire event count**: how many times we enter an attack state (10/11/12/13)
-  2. **Average damage per fired move** = that round's total damage / moves fired
-  3. **Effective-output duty cycle** = frames spent in an attack state / total frames
+分三个数：
+  1. **发招事件数**：进入攻击态（10/11/12/13）的次数
+  2. **每次发招的平均伤害** = 该局总伤害 / 发招次数
+  3. **有效输出占空比** = 处于攻击态的帧数 / 总帧数
 
-Usage::
+用法::
     python analyze_efficiency.py
 """
 
@@ -20,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-ATTACK_STATES = {10, 11, 12, 13}      # normal attack / skill / special / super
+ATTACK_STATES = {10, 11, 12, 13}      # 普攻/技能/必杀/超必杀
 FULL = 1900.0
 HZ = 30.0
 
@@ -28,9 +27,9 @@ HZ = 30.0
 def main() -> int:
     p = Path("runs/match_run/frames.json")
     fr = json.loads(p.read_text(encoding="utf-8"))
-    print(f"[eff] {len(fr)} frames")
+    print(f"[eff] {len(fr)} 帧")
 
-    # Split rounds on the HP reset (same criterion as analyze_rounds)
+    # 按血量重置切局（同 analyze_rounds 的判据）
     rounds = []
     cur = None
     prev = None
@@ -61,9 +60,9 @@ def main() -> int:
     if cur and cur["frames"] > 30:
         rounds.append(cur)
 
-    print(f"[eff] {len(rounds)} rounds\n")
-    print(f"  {'rnd':>3} {'secs':>6} {'dmg':>6} {'fires':>5} {'dmg/fire':>8} "
-          f"{'atk duty':>9} {'dmg/sec':>7}")
+    print(f"[eff] {len(rounds)} 个小局\n")
+    print(f"  {'局':>3} {'时长':>6} {'伤害':>6} {'发招':>5} {'每招伤害':>8} "
+          f"{'攻击态占比':>9} {'伤害/秒':>7}")
     print("  " + "-" * 56)
     tot_dmg = tot_fired = tot_frames = tot_atk = tot_sec = 0
     for i, r in enumerate(rounds, 1):
@@ -81,18 +80,18 @@ def main() -> int:
         tot_sec += sec
 
     if tot_fired:
-        print("\n  Totals:")
-        print(f"    total damage {tot_dmg:.0f} / total moves fired {tot_fired} "
-              f"-> **average {tot_dmg / tot_fired:.1f} damage per fired move**")
-        print(f"    effective-output duty cycle {100.0 * tot_atk / max(1, tot_frames):.1f}% "
-              f"(attack-state frames / total frames)")
-        print(f"    total duration {tot_sec:.0f}s -> **{tot_dmg / max(0.1, tot_sec):.1f} damage/sec**")
+        print("\n  合计:")
+        print(f"    总伤害 {tot_dmg:.0f} / 总发招 {tot_fired} 次 "
+              f"-> **平均每次发招 {tot_dmg / tot_fired:.1f} 伤害**")
+        print(f"    有效输出占空比 {100.0 * tot_atk / max(1, tot_frames):.1f}% "
+              f"（攻击态帧 / 总帧）")
+        print(f"    总时长 {tot_sec:.0f}s -> **{tot_dmg / max(0.1, tot_sec):.1f} 伤害/秒**")
 
-    print("\n  How to read this:")
-    print("    * low damage per move (<60) = individual moves too light, or lots of whiffs")
-    print("    * low duty cycle (<30%) = not attacking most of the time (jumping / walking / waiting)")
-    print("    * damage/sec is the most direct 'output efficiency' — Ichigo at full health is 2000, "
-          "so at only 10/sec a round takes 200 seconds")
+    print("\n  判读：")
+    print("    * 每招伤害低(<60) = 单招太轻或大量空挥")
+    print("    * 占空比低(<30%) = 大部分时间没在出招（跳/走/等）")
+    print("    * 伤害/秒 是最直观的'输出效率' —— 一护满血 2000，"
+          "如果只有 10/秒，一局就要 200 秒")
     return 0
 
 

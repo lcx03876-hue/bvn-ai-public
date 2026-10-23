@@ -188,13 +188,23 @@ python play.py --model --rounds 4
 
 ### Automated evaluation with confidence intervals
 
-`battle_multi.py` runs N rounds and reports win rate plus a 95% CI, which is the
-only number worth trusting:
+The preferred protocol is **complete best-of-3 matches with panel-verified
+characters** — the runner writes the character / assist / map ids through the
+tester panel and reads them back, and it stores `p1Id` / `p2Id` in every result:
 
 ```bash
-python battle_multi.py --policy rule                        --rounds 4 --seconds 120
-python battle_multi.py --policy onnx --onnx runs/x/qnet.onnx --rounds 4 --seconds 120
+python run_dagger_matches.py --matches 3 --rule-driven --technique-mix --prefix rule --out data
+python run_dagger_matches.py --matches 3 --dagger-onnx models/wankai_v9/qnet.onnx \
+                             --mask --prefix v9 --out data
 ```
+
+`--mask` applies the legality mask before sampling. It is **not optional** if you
+want the published numbers: without it the policy fires transforms it cannot
+afford and the comparison is meaningless.
+
+`battle_multi.py` is the older per-round runner (`--rounds N --seconds 120`,
+`--policy rule|onnx`). It reports a 95 % CI as well, but it does not verify which
+character it played against — prefer `run_dagger_matches.py`.
 
 ---
 

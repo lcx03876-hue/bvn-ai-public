@@ -1,10 +1,8 @@
-// ==================== INJECTED: skip the round intro (not in the original) ====================
-// Why: bring the match up as fast as possible. The stock intro (camera moves,
-// voice lines, poses) runs 40-60 seconds, during which actionEnable is false
-// while the CPU opponent is already hitting P1 -- measured at 240 HP left by
-// the time control was handed over.
-// `skip()` already exists in the original code (the pause menu uses it), so
-// this simply calls it at the top of renderStart1v1().
-// Measured effect: intro drops to about 15 frames (_holdFrame = 0.5 * FPS).
-skip();
-// ================== end of intro-skip injection ==================
+         // ==================== 注入：开场立刻跳过（非原版）====================
+         // 目的：**快速接入对局**。
+         // 原版开场演出要 40~60 秒（镜头/台词/姿势），期间 actionEnable=False，
+         // 而人机已经在打 P1（实测就绪时 P1 只剩 240 血）。
+         // `skip()` 是原版就有的（暂停菜单里用），这里直接调用它。
+         // 效果：开场压到约 15 帧（_holdFrame = 0.5 * FPS）。
+         skip();
+         // ================== 开场跳过注入结束 ==================

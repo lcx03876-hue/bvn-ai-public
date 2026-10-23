@@ -1,21 +1,19 @@
-"""Segment rounds by **hp reset** and recompute the damage of each round
-(fixes the calibration bug in match_run).
+"""按**血量重置**切分小局，重新算每局伤害（修 match_run 的口径 bug）。
 
-**The bug found** (proven on the logs of match 4/5):
-  `match_run` used "the official score change" as the round boundary, but
-  **the score changes about 8 seconds earlier than the hp reset**:
+**发现的 bug**（第 4/5 场日志实证）：
+  `match_run` 用"官方比分变化"当小局边界，但**比分变化比血量重置早约 8 秒**：
 ```
-i=5863   t=107.3   score(1,0)  P1=1458 P2=0     <- the score changes first
-i=6317   t=115.4   P2 hp 0 -> 2000              <- the hp only resets 8 seconds later
+i=5863   t=107.3   比分(1,0)  P1=1458 P2=0     <- 比分先变
+i=6317   t=115.4   P2 血量 0 -> 2000           <- 8 秒后血量才重置
 ```
-  So "this round's starting hp" grabbed the **old, not-yet-reset value** (P2=0),
-  and the damage stats of round 2 were straight up worthless (it reported "dealt 0").
+  于是"本局起点血量"抓到的是**还没重置的旧值**（P2=0），
+  小局 2 的伤害统计直接废掉（报"打出 0"）。
 
-**The right way**: decide round boundaries by the **hp reset** —
-  when both sides' hp are back near full (>1900), treat it as the start of a new round.
+**正确做法**：小局边界用**血量重置**判定 ——
+  双方血量都回到接近满值（>1900）时，视为新一局开始。
 
-Usage::
-    python analyze_rounds.py                       # analyze runs/match_run/frames.json
+用法::
+    python analyze_rounds.py                       # 分析 runs/match_run/frames.json
     python analyze_rounds.py --frames xxx.json
 """
 
@@ -29,19 +27,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 FULL = 1900.0
-NAMES = {0: "idle", 10: "light J", 11: "skill U", 12: "special I/wi", 13: "super si",
-         14: "jump", 15: "dash L", 20: "guard", 21: "hurt", 22: "launched",
-         23: "down", 40: "recovery", 50: "★Bankai★", 61: "win"}
+NAMES = {0: "待机", 10: "普攻J", 11: "技能U", 12: "必杀I/wi", 13: "超必杀si",
+         14: "跳", 15: "冲刺L", 20: "防御", 21: "受击", 22: "击飞",
+         23: "倒地", 40: "收招", 50: "★万解★", 61: "胜"}
 
 
 def segment(frames: list[dict]) -> list[dict]:
-    """Cut into rounds by hp reset.
+    """按血量重置切成小局。
 
-    ★ The criterion is "one side's hp was very low on the previous frame -> this frame
-      it jumps back to full" ★
-      Proven (match 5): `p2hp: 0 -> 2000` is the start of a new round.
-      Do not use "both sides are full" (P1 often wins without ever being taken below
-      full hp, so that misses the boundary).
+    ★ 判据用"上一帧某方血量很低 -> 这一帧跳回满值" ★
+      实证（第 5 场）：`p2hp: 0 -> 2000` 就是新一局开始。
+      不要用"双方都满"（P1 常常没被打到满血以下就赢了，会漏判）。
     """
     rounds: list[dict] = []
     cur: dict | None = None
@@ -77,9 +73,9 @@ def main() -> int:
     args = ap.parse_args()
 
     fr = json.loads(Path(args.frames).read_text(encoding="utf-8"))
-    print(f"[round] {len(fr)} frames")
+    print(f"[round] {len(fr)} 帧")
     rounds = segment(fr)
-    print(f"[round] cut {len(rounds)} rounds by **hp reset**\n")
+    print(f"[round] 按**血量重置**切出 {len(rounds)} 个小局\n")
 
     dealt_all, taken_all = [], []
     for i, r in enumerate(rounds, 1):
@@ -89,31 +85,31 @@ def main() -> int:
         taken_all.append(taken)
         dur = sum(r["st"].values()) / 30.0
         won = r["min2"] <= 5
-        print(f"  round {i}: {dur:5.0f}s  start P1={r['start'][0]:.0f}/P2={r['start'][1]:.0f}"
-              f"  min P1={r['min1']:.0f}/P2={r['min2']:.0f}"
-              f"  -> dealt {dealt:.0f} / taken {taken:.0f}"
-              f"  {'✅ win' if won else '❌ loss/unfinished'}")
+        print(f"  小局{i}: {dur:5.0f}s  起点 P1={r['start'][0]:.0f}/P2={r['start'][1]:.0f}"
+              f"  最低 P1={r['min1']:.0f}/P2={r['min2']:.0f}"
+              f"  -> 打出 {dealt:.0f} / 承受 {taken:.0f}"
+              f"  {'✅ 赢' if won else '❌ 输/未完'}")
 
     if dealt_all:
-        print(f"\n  dealt: median {statistics.median(dealt_all):.0f}  "
-              f"range {min(dealt_all):.0f}~{max(dealt_all):.0f}")
-        print(f"  taken: median {statistics.median(taken_all):.0f}  "
-              f"range {min(taken_all):.0f}~{max(taken_all):.0f}")
+        print(f"\n  打出: 中位 {statistics.median(dealt_all):.0f}  "
+              f"范围 {min(dealt_all):.0f}~{max(dealt_all):.0f}")
+        print(f"  承受: 中位 {statistics.median(taken_all):.0f}  "
+              f"范围 {min(taken_all):.0f}~{max(taken_all):.0f}")
         n_win = sum(1 for r in rounds if r["min2"] <= 5)
-        print(f"  round record: {n_win} wins {len(rounds) - n_win} losses")
+        print(f"  小局战绩: {n_win} 胜 {len(rounds) - n_win} 负")
 
-    # state distribution over the whole match
+    # 整场状态分布
     allst = Counter()
     for r in rounds:
         allst.update(r["st"])
     tot = sum(allst.values()) or 1
-    print(f"\n  action distribution ({tot} frames):")
+    print(f"\n  动作分布（{tot} 帧）:")
     for k, v in allst.most_common(12):
         print(f"    st={k:<3} {NAMES.get(k, '?'):<10} {100 * v / tot:>5.1f}%")
 
-    print("\n  Reading:")
-    print("    * this is the trustworthy per-round damage (match_run's old calibration suffered from the 'hp reset lag')")
-    print("    * high idle/jump share = wasted time; hurt+down = how often we got hit")
+    print("\n  判读：")
+    print("    * 这才是可信的每局伤害（match_run 原口径受'血量重置滞后'影响）")
+    print("    * 待机/跳 占比高 = 有浪费；受击+倒地 = 挨打比例")
     return 0
 
 

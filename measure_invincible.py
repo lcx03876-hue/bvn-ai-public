@@ -1,23 +1,20 @@
-"""Measure the **real invincibility duration** -- the key correction from the user.
+"""量出**真实的无敌期时长** —— 用户指正的关键。
 
-**User correction**:
-  "The most serious problem of all is that your calculation of the wake-up
-    invincibility time is not wrong, but you ignored the fact that **the time
-    spent flying out after being hit is also invincible**, so you can never
-    catch the wake-up"
+**用户指正**：
+  「最最严重的问题就是你计算起身无敌时间没有错，
+    但是你忽略了**受击飞出去的时间也是无敌的**，所以你总是压不到起身」
 
-**Data check (using the frames from match_run)**:
-  Fraction of frames in which P2 "loses health this frame", per state:
-    hurt(21)      1244 frames 1.77%  <- not invincible
-    launched(22)  1321 frames 0.00%  <- ★ invincible ★
-    down(23)       879 frames 0.00%  <- ★ invincible ★
-    down-bounce(24) 273 frames 0.00%  <- ★ invincible ★
-  => the invincible window is **22+23+24**, I had only counted 23 (and even thought it was 15 frames).
+**数据验证（用 match_run 的帧）**：
+  P2 各状态下"这一帧掉血"的比例：
+    受击(21) 1244 帧 1.77%  <- 不是无敌
+    击飞(22) 1321 帧 0.00%  <- ★ 无敌 ★
+    倒地(23)  879 帧 0.00%  <- ★ 无敌 ★
+    倒地弹(24) 273 帧 0.00%  <- ★ 无敌 ★
+  => 无敌窗口是 **22+23+24**，我原来只数了 23（还以为是 15 帧）。
 
-This script measures the **real duration distribution** of the invincible
-period, so that `pressure_start` can be corrected.
+本脚本量出无敌期的**真实时长分布**，用来修正 `pressure_start`。
 
-Usage::
+用法::
     python measure_invincible.py
 """
 
@@ -53,33 +50,33 @@ def main() -> int:
     if cur:
         segs.append((cur, tuple(seq)))
 
-    print(f"[inv] invincible periods (consecutive runs of 22/23/24): {len(segs)} segments")
+    print(f"[inv] 无敌期（22/23/24 连续段）共 {len(segs)} 段")
     lens = [s[0] for s in segs if s[0] >= 3]
     if not lens:
-        print("  no valid segments")
+        print("  没有有效段")
         return 1
-    print(f"  duration(frames): median {statistics.median(lens):.0f}  "
-          f"mean {statistics.mean(lens):.1f}  range {min(lens)}~{max(lens)}")
-    print(f"  duration(sec): median {statistics.median(lens) / HZ:.2f}  "
-          f"mean {statistics.mean(lens) / HZ:.2f}")
+    print(f"  时长(帧): 中位 {statistics.median(lens):.0f}  "
+          f"均值 {statistics.mean(lens):.1f}  范围 {min(lens)}~{max(lens)}")
+    print(f"  时长(秒): 中位 {statistics.median(lens) / HZ:.2f}  "
+          f"均值 {statistics.mean(lens) / HZ:.2f}")
 
-    # Quantiles (where the timing should aim)
+    # 分位数（择时该瞄准的位置）
     srt = sorted(lens)
     for q in (0.25, 0.5, 0.75, 0.9):
         i = int(q * (len(srt) - 1))
-        print(f"    {int(q * 100)}% quantile: {srt[i]} frames ({srt[i] / HZ:.2f}s)")
+        print(f"    {int(q * 100)}% 分位: {srt[i]} 帧 ({srt[i] / HZ:.2f}s)")
 
-    # Composition
+    # 组成
     agg: Counter[int] = Counter()
     for n, s in segs:
         if n >= 3:
             agg.update(s)
     tot = sum(agg.values())
-    print("\n  share of each state inside the invincible period:")
+    print("\n  无敌期里各状态占比:")
     for k in sorted(agg):
-        print(f"    st={k}  {agg[k]:5d} frames  {100 * agg[k] / tot:5.1f}%")
+        print(f"    st={k}  {agg[k]:5d} 帧  {100 * agg[k] / tot:5.1f}%")
 
-    # The key one: counted from st=23, how many frames remain until invincibility ends
+    # 关键：从 st=23 开始算，到无敌结束还有多少帧
     tails = []
     for n, s in segs:
         if n < 3:
@@ -88,20 +85,20 @@ def main() -> int:
             i23 = s.index(23)
         except ValueError:
             continue
-        tails.append(len(s) - i23)      # first frame of st=23 -> end of invincibility
+        tails.append(len(s) - i23)      # st=23 首帧 -> 无敌结束
     if tails:
-        print(f"\n  ★ frames from 'first occurrence of st=23' to 'end of invincibility' ({len(tails)} segments):")
-        print(f"     median {statistics.median(tails):.0f} frames "
+        print(f"\n  ★ 从「st=23 首次出现」到「无敌结束」的帧数（{len(tails)} 段）:")
+        print(f"     中位 {statistics.median(tails):.0f} 帧 "
               f"({statistics.median(tails) / HZ:.2f}s)  "
-              f"range {min(tails)}~{max(tails)}")
-        print("     -> I originally used pressure_start=12 (thinking down lasted only 15 frames), "
-              "**far too early**")
-        print(f"     -> should aim to throw the move around frame **{int(statistics.median(tails)) - 2}** "
-              f"(leaving 2 frames of start-up)")
+              f"范围 {min(tails)}~{max(tails)}")
+        print("     -> 我原来用 pressure_start=12（以为倒地只有 15 帧），"
+              "**太早了**")
+        print(f"     -> 应该瞄准 **{int(statistics.median(tails)) - 2}** 帧附近发招"
+              f"（留 2 帧前摇）")
 
-    print("\n  reading:")
-    print("    * the invincible period = launched(22) + down(23) + down-bounce(24), much longer than 15 frames")
-    print("    * throwing a move during the invincible period = pure whiff, and it **misses the wake-up hit**")
+    print("\n  判读：")
+    print("    * 无敌期 = 击飞(22) + 倒地(23) + 倒地弹(24)，比 15 帧长得多")
+    print("    * 在无敌期里发招 = 纯空挥，而且**错过了起身那一击**")
     return 0
 
 

@@ -1,7 +1,7 @@
-"""Pin down gather's boundary conditions: synthesise a big pool, deliberately manufacture "truncation" and "cross-chunk".
+"""把 gather 的边界条件钉死：合成大池子，故意制造"截断"和"跨块"。
 
-The production bug we saw: the very first sampled value of a float candidate was already garbage (something like -3e38),
-which means the read ran past the region into another chunk (reading an int32 bit pattern as a float gives you exactly that magnitude).
+之前线上的 bug 现象：float 候选的第一个采样值就已经是垃圾（-3e38 这种），
+说明读取越界到了别的块（把 int32 位型当 float 读就会得到这种量级）。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from watch_fast import (  # noqa: E402
 
 
 def _snap_two_regions() -> MemorySnapshot:
-    """Two regions: one all ascending int32, one all the float constant 500.0."""
+    """两个区域：一个全是 int32 递增，一个全是 float 常量 500.0。"""
     region_a = b"".join(struct.pack("<i", 100 + i) for i in range(64))
     region_b = b"".join(struct.pack("<f", 500.0) for i in range(64))
     return MemorySnapshot(
@@ -34,24 +34,24 @@ def _snap_two_regions() -> MemorySnapshot:
 
 
 def test_gather_does_not_cross_chunk_boundaries() -> None:
-    """Across chunks, chunk A's data must never be read as chunk B's. This is the prime suspect for the production bug."""
+    """跨块时不能把 A 块的数据当成 B 块的读。这是线上 bug 的核心怀疑点。"""
     snap = _snap_two_regions()
     chunks, bases = build_chunks(snap)
-    assert len(chunks) == 2, f"expected 2 chunks, got {len(chunks)}"
+    assert len(chunks) == 2, f"应有 2 块，实际 {len(chunks)}"
     assert bases == [0x1000, 0x9000], [hex(b) for b in bases]
 
-    # Float only: should only hit the 64 copies of 500.0 at 0x9000
+    # 只收 float：应该只命中 0x9000 那 64 个 500.0
     addrs, vals, types = collect_candidates(
         chunks, bases, 499.0, 501.0, "float", 1000
     )
-    assert addrs.shape[0] == 64, f"expected 64 float candidates, got {addrs.shape[0]}"
+    assert addrs.shape[0] == 64, f"float 候选应 64 个，实际 {addrs.shape[0]}"
     assert all(int(t) == KIND_FLOAT for t in types)
-    assert all(int(a) >= 0x9000 for a in addrs), "must not hit a float inside chunk A"
+    assert all(int(a) >= 0x9000 for a in addrs), "不该在 A 块里命中 float"
 
     vals2 = gather(chunks, bases, addrs, types)
-    assert np.allclose(vals2, 500.0), f"gather should read back all 500.0, got {vals2[:5]}"
+    assert np.allclose(vals2, 500.0), f"gather 应全部读回 500.0，实际 {vals2[:5]}"
 
-    # Mixed types: collect int32 and float together, after gather each must line up
+    # 混类型：int32 和 float 同时收，gather 后各自必须对得上
     addrs_m, vals_m, types_m = collect_candidates(
         chunks, bases, 100.0, 600.0, "both", 10_000
     )
@@ -59,33 +59,33 @@ def test_gather_does_not_cross_chunk_boundaries() -> None:
     for a, want, t in zip(addrs_m, vals_m, types_m):
         ai = int(a)
         if int(t) == KIND_INT32:
-            assert 0x1000 <= ai < 0x1100, f"int32 candidate has a bogus address 0x{ai:X}"
+            assert 0x1000 <= ai < 0x1100, f"int32 候选地址异常 0x{ai:X}"
             assert abs(float(got[list(addrs_m).index(a)]) - float(want)) < 1e-6
         else:
-            assert 0x9000 <= ai < 0x9100, f"float candidate has a bogus address 0x{ai:X}"
+            assert 0x9000 <= ai < 0x9100, f"float 候选地址异常 0x{ai:X}"
             assert abs(float(got[list(addrs_m).index(a)]) - 500.0) < 1e-4
 
 
 def test_truncated_pool_has_correct_lengths() -> None:
-    """When candidates are truncated by max_candidates, addrs/vals/types must all be the same length,
-    and gather may only return that same length too (the production bug may have been a length mismatch right here)."""
+    """候选被 max_candidates 截断时，addrs/vals/types 长度必须一致，
+    且 gather 也只能返回同样长度（线上 bug 可能是这里长度错位）。"""
     snap = _snap_two_regions()
     chunks, bases = build_chunks(snap)
     addrs, vals, types = collect_candidates(chunks, bases, 0.0, 10_000.0, "both", 40)
     n = addrs.shape[0]
-    assert n == 40, f"should be truncated to 40, got {n}"
-    assert vals.shape[0] == n, f"vals length {vals.shape[0]} != {n}"
-    assert types.shape[0] == n, f"types length {types.shape[0]} != {n}"
+    assert n == 40, f"应被截断到 40，实际 {n}"
+    assert vals.shape[0] == n, f"vals 长度 {vals.shape[0]} != {n}"
+    assert types.shape[0] == n, f"types 长度 {types.shape[0]} != {n}"
     got = gather(chunks, bases, addrs, types)
-    assert got.shape[0] == n, f"gather returned length {got.shape[0]} != {n}"
+    assert got.shape[0] == n, f"gather 返回长度 {got.shape[0]} != {n}"
 
 
 def test_gather_across_many_chunks() -> None:
-    """Many chunks + random addresses: gather must line every one of them up, and it must never cross chunks.
+    """很多块 + 随机地址：gather 必须逐个对上，不能串块。
 
-    **The addresses are deliberately high (0x1C000000 and up)** —— this is a pit we fell into:
-    low addresses (0x1000) are exactly representable in float64, so the low-address tests all went green,
-    while the high addresses in production were read wrong because of a type promotion from mixing int64/uint64.
+    **地址故意取在高位（0x1C000000 以上）** —— 这是踩过的坑：
+    低地址（0x1000）在 float64 里能精确表示，所以低地址测试全绿，
+    线上高位地址却因为 int64/uint64 混用的类型提升而读错。
     """
     rng = np.random.default_rng(0)
     regions = []
@@ -106,16 +106,16 @@ def test_gather_across_many_chunks() -> None:
         if truth[int(a)] != float(g):
             bad += 1
             if bad <= 5:
-                print(f"    !! 0x{int(a):X} expected {truth[int(a)]} got {g}")
-    assert bad == 0, f"{bad}/{addrs.shape[0]} addresses read wrong (chunks crossed)"
+                print(f"    !! 0x{int(a):X} 期望 {truth[int(a)]} 实际 {g}")
+    assert bad == 0, f"{bad}/{addrs.shape[0]} 个地址读错（串块了）"
 
 
 def test_gather_high_addresses_mixed_types() -> None:
-    """High addresses + mixed types: a float must not be read as int32, nor the other way round.
+    """高位地址 + 混合类型：float 不能被当 int32 读，也不能反过来。
 
-    Purpose-built to reproduce the "int32 bit pattern read out as float32 gives ±1e38" symptom.
+    专门复现"int32 位型被当 float32 读出 ±1e38"那个症状。
     """
-    # High-address region: first half int32=12345, second half float32=456.75
+    # 高地址区域，前半 int32=12345，后半 float32=456.75
     base = 0x2087_0000
     ints = np.full(64, 12345, dtype=np.int32)
     floats = np.full(64, 456.75, dtype=np.float32)
@@ -126,25 +126,25 @@ def test_gather_high_addresses_mixed_types() -> None:
     addrs_i, vals_i, types_i = collect_candidates(
         chunks, bases, 12000.0, 13000.0, "int32", 1000
     )
-    assert addrs_i.shape[0] == 64, f"int32 should hit 64, got {addrs_i.shape[0]}"
+    assert addrs_i.shape[0] == 64, f"int32 应命中 64 个，实际 {addrs_i.shape[0]}"
     got_i = gather(chunks, bases, addrs_i, types_i)
-    assert np.allclose(got_i, 12345.0), f"int32 read wrong: {got_i[:5]}"
+    assert np.allclose(got_i, 12345.0), f"int32 读错: {got_i[:5]}"
 
     addrs_f, vals_f, types_f = collect_candidates(
         chunks, bases, 456.0, 457.0, "float", 1000
     )
-    assert addrs_f.shape[0] == 64, f"float should hit 64, got {addrs_f.shape[0]}"
+    assert addrs_f.shape[0] == 64, f"float 应命中 64 个，实际 {addrs_f.shape[0]}"
     got_f = gather(chunks, bases, addrs_f, types_f)
-    assert np.allclose(got_f, 456.75), f"float read wrong: {got_f[:5]}"
+    assert np.allclose(got_f, 456.75), f"float 读错: {got_f[:5]}"
     assert np.all(np.abs(got_f) < 1e6), (
-        f"a float reading out an astronomical number means it was read as int32: {got_f[:5]}"
+        f"float 读出天文数字说明被当 int32 读了: {got_f[:5]}"
     )
-    # Every float candidate's address must fall in the second half of the buffer
-    assert np.all((addrs_f.astype(np.int64) - base) >= 64 * 4), "float candidate addresses computed wrong"
+    # 每个 float 候选的地址都必须落在缓冲区后半段
+    assert np.all((addrs_f.astype(np.int64) - base) >= 64 * 4), "float 候选地址算错了"
 
 
 def test_gather_survives_region_size_change() -> None:
-    """A region shrinks between snapshots: addresses that fall outside the new chunk must give NaN, and must not bleed into the neighbouring chunk."""
+    """快照之间区域变小：落在新块外的地址必须给 NaN，不能串到隔壁块。"""
     base = 0x1C9B_0000
     big = np.arange(256, dtype=np.int32).tobytes()
     snap1 = MemorySnapshot([RegionDump(base, big)])
@@ -152,13 +152,13 @@ def test_gather_survives_region_size_change() -> None:
     addrs, vals, types = collect_candidates(chunks1, bases1, 200, 255, "int32", 1000)
     assert addrs.shape[0] == 56, addrs.shape[0]
 
-    # The region shrinks to just its head, so those later addresses are now "dangling"
+    # 区域缩小到只剩开头，后面那些地址就"悬空"了
     small = np.arange(16, dtype=np.int32).tobytes()
     snap2 = MemorySnapshot([RegionDump(base, small)])
     chunks2, bases2 = build_chunks(snap2)
     got = gather(chunks2, bases2, addrs, types)
     assert np.all(np.isnan(got)), (
-        f"after the region shrank, dangling addresses should return NaN, got {got[:8]}"
+        f"区域变小后悬空地址应返回 NaN，实际 {got[:8]}"
     )
 
 
@@ -175,7 +175,7 @@ def _run_all() -> int:
         except Exception as exc:  # noqa: BLE001
             failed += 1
             print(f"  ERROR {fn.__name__}: {type(exc).__name__}: {exc}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    print(f"\n{len(tests) - failed}/{len(tests)} 通过")
     return 1 if failed else 0
 
 

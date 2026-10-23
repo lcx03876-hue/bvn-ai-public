@@ -9,18 +9,19 @@
 │   GameCtrler.render()  ── runs every frame ──┐                   │
 │                                              │                   │
 │   [ injected code ]  writes state JSON  ◄────┘                   │
-│                      ~30 Hz to runs/bvn_state.json               │
+│                      on every rendered frame (~60 Hz)            │
 └──────────────────────────────┬───────────────────────────────────┘
                                │ file poll
 ┌──────────────────────────────▼───────────────────────────────────┐
 │  Python                                                          │
 │                                                                  │
 │   layer 1  read_bridge.py     parse JSON, freshness guard         │
-│   layer 2  state.py           100-dim observation + reward        │
+│   layer 2  state.py           112-dim observation + reward        │
 │   layer 3  collect_data.py    rule policy, DAgger labelling       │
 │   layer 4  train.py           BC, then conservative offline RL    │
 │   layer 5  export_onnx.py     torch → ONNX                        │
 │   layer 6  infer.py/play_real.py   ONNX → key injection           │
+│             + action_mask.py  affordance mask before sampling     │
 └──────────────────────────────┬───────────────────────────────────┘
                                │ SendInput
                                ▼
@@ -110,9 +111,23 @@ never modified to switch backends — `backends.py` gained a `--bridge` flag.
 
 ## Layer 2 — observation and reward
 
-100-dimensional observation built by `StateBuilder` (`state.py`): normalised
-positions, velocities, deltas, HP/qi fractions, action states, facing, air
-state, round context.
+**112-dimensional** observation built by `StateBuilder` (`state.py`), two stacked
+frames of 56 values each. Per player (10 values): `x`, `y`, `hp`, `qi`, `facing`,
+`hitstun`, `alive`, `forms_used / 2`, `can_transform`, `qi_gap`; then 4 relative
+values (`dx`, `dy`, `hp_diff`, `mp_diff`) and two 16-wide one-hot blocks of the
+in-game action state.
+
+Three of those features exist because their absence produced a specific, measured
+failure:
+
+| Feature | Added because |
+|---|---|
+| `forms_used`, `can_transform` | "qi = 300" mapped to two *opposite* labels (transform now / transform is over, spend it). The model averaged them and transformed 0/6 times on the real game |
+| `qi_gap = (300 − qi) / 300` | "Should I save for the next transformation?" is a multi-frame decision; from `qi` alone the model cannot see "80 more and I can transform", so it spent qi immediately |
+
+`obs_compat.py` lets a model trained on the older 108-dim layout run against the
+current runtime by dropping the two `qi_gap` columns (a pure function of `qi`, so
+nothing is lost). It refuses unknown dimension pairs instead of guessing.
 
 The reward function is damage-proportional:
 
@@ -206,6 +221,35 @@ Measured latencies for one inference step:
 
 Against a 16 ms budget at 60 Hz, that leaves ~15.7 ms of headroom. **The
 bottleneck is data quality, not engineering.**
+
+---
+
+## Deployment detail — the action mask
+
+The network's output is a distribution over 21 actions. Nothing in that
+distribution knows that `wankai` costs 300 qi, that `bishaSUPER` costs 300, or
+that an air move is impossible on the ground. `action_mask.mask_for()` builds a
+boolean legality mask (qi / air / action-state / can-transform) and
+`play_real.py --mask` applies it *before* sampling:
+
+```python
+logits = np.where(mask, logits, -1e9)
+```
+
+Measured on three matches before the change:
+
+| Qi-costing move | Attempts | Fired with insufficient qi |
+|---|---|---|
+| `wankai` (300) | 34 | **22 (64.7 %)** |
+| `bishaSUPER` (300) | 143 | 69 (48.3 %) |
+
+This is not free noise: an unaffordable transform still runs the atomic key
+sequence (release all → both down → 200 ms → release) and fails. With the mask,
+0 of 34 were unaffordable, two transformations happened in 3/3 matches, damage
+taken dropped 17 % and net damage per round rose from +1161 to +1277.
+
+The same file is used by the DAgger collector, so the data collected for the
+next round of training also reflects what the agent can actually do.
 
 ---
 

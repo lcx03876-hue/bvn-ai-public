@@ -1,11 +1,11 @@
-"""Stage 4: networks and training utilities (PyTorch).
+"""阶段 4：网络与训练工具（PyTorch）。
 
-Small nets: a 2-3 layer MLP. The state is a 100-dim low-dimensional vector, **do not bring a CNN**.
+小网络：2-3 层 MLP。状态是 100 维低维向量，**不要上 CNN**。
 
-Two networks:
-  * ``PolicyNet``  policy head, used for behaviour cloning (emits logits per action)
-  * ``QNet``       action value, used for DQN (emits a Q value per action)
-Both have exactly the same structure, so once BC is done you can pour the weights straight into QNet as initialisation.
+两个网络：
+  * ``PolicyNet``  策略头，行为克隆用（输出每个动作的 logits）
+  * ``QNet``       动作价值，DQN 用（输出每个动作的 Q 值）
+两者结构完全一样，所以 BC 训完可以直接把权重灌进 QNet 当初始化。
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def pick_device(prefer: str = "auto") -> torch.device:
 
 
 class MLP(nn.Module):
-    """Generic MLP trunk. An empty ``hidden`` degenerates into a single linear layer."""
+    """通用 MLP 主干。hidden 为空则退化成线性层。"""
 
     def __init__(
         self,
@@ -63,7 +63,7 @@ class MLP(nn.Module):
 
 
 class PolicyNet(nn.Module):
-    """Policy network used for behaviour cloning."""
+    """行为克隆用的策略网络。"""
 
     def __init__(self, obs_dim: int, n_actions: int, hidden: Sequence[int] = (256, 256)) -> None:
         super().__init__()
@@ -85,7 +85,7 @@ class PolicyNet(nn.Module):
 
 
 class QNet(nn.Module):
-    """The action-value network for DQN."""
+    """DQN 的动作价值网络。"""
 
     def __init__(self, obs_dim: int, n_actions: int, hidden: Sequence[int] = (256, 256)) -> None:
         super().__init__()
@@ -111,17 +111,17 @@ class QNet(nn.Module):
 
 
 def copy_policy_to_qnet(policy: PolicyNet, qnet: QNet) -> None:
-    """BC weights -> QNet initialisation (same structure, so a plain load_state_dict)."""
+    """BC 权重 -> QNet 初始化（结构相同，直接 load_state_dict）。"""
     qnet.body.load_state_dict(policy.body.state_dict())
 
 
-# ---------------------------------------------------------------- dataset
+# ---------------------------------------------------------------- 数据集
 
 
 class TransitionDataset:
-    """Reads (obs, action, reward, next_obs, done) out of an npz.
+    """从 npz 里读 (obs, action, reward, next_obs, done)。
 
-    Behaviour cloning only uses obs/action; DQN fine-tuning uses every field.
+    行为克隆只用 obs/action；DQN 微调用全部字段。
     """
 
     def __init__(
@@ -175,7 +175,7 @@ class TransitionDataset:
         return np.bincount(self.actions, minlength=NUM_ACTIONS)
 
     def balanced_weights(self) -> np.ndarray:
-        """Weight samples by the inverse class frequency: very handy when the action distribution is wildly unbalanced (tons of noop)."""
+        """按类别倒数为样本加权：动作分布极不均衡时（大量 noop）很有用。"""
         counts = self.class_counts().astype(np.float64)
         counts[counts == 0] = 1.0
         per_class = 1.0 / counts
@@ -201,7 +201,7 @@ class TransitionDataset:
 
 
 class ReplayBuffer:
-    """A simple ring buffer, used for DQN fine-tuning."""
+    """简单环形队列，DQN 微调用。"""
 
     def __init__(self, capacity: int, obs_dim: int, seed: int = 0) -> None:
         self.capacity = capacity
@@ -260,12 +260,12 @@ class ReplayBuffer:
         return self.size
 
 
-# ---------------------------------------------------------------- logging
+# ---------------------------------------------------------------- 日志
 
 
 @dataclass
 class MetricLog:
-    """Training log: writes a csv + saves a json summary."""
+    """训练日志：写 csv + 保存 json 摘要。"""
 
     path: Path
     rows: list[dict[str, Any]] = field(default_factory=list)

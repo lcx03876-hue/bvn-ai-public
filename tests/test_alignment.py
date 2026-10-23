@@ -1,16 +1,14 @@
-"""Regression tests: every step of the encoding path must satisfy "same frame -> same vector".
+"""回归测试：编码路径的每一步都必须满足"同一帧 -> 同一向量"。
 
-This invariant is the foundation of the whole loop:
+这条不变量是整个闭环的地基：
 
-    action/state frame alignment = step t's (obs_t, action_t, reward_t, next_obs_t)
-    must genuinely correspond to "the two frames before and after issuing the action".
+    动作与状态帧对齐 = 第 t 步的 (obs_t, action_t, reward_t, next_obs_t)
+    必须真的对应"发出动作前后的两帧"。
 
-If any link introduces a frame misalignment (reading one frame too few, pushing the
-builder one extra time, a coordinate flip, mirror inconsistency), the trained policy
-learns the wrong thing and it is very hard to debug. So here we assert directly
-against the mock game's ground truth.
+任何一环引入帧错位（少读一帧、多推一次 builder、坐标翻转、镜像不一致），
+训练出来的策略就会学歪，而且很难 debug。所以这里直接对着模拟游戏的真值断言。
 
-Run: python -m pytest tests -q     or     python tests/test_alignment.py
+跑：python -m pytest tests -q     或     python tests/test_alignment.py
 """
 
 from __future__ import annotations
@@ -47,11 +45,11 @@ def _truth_frame(p1: _Body, p2: _Body, frame_no: int) -> Frame:
     return Frame(frame=frame_no, p1=conv(p1), p2=conv(p2), valid=True)
 
 
-# ---------------------------------------------------------------- 1. Encoding is a pure function
+# ---------------------------------------------------------------- 1. 编码是纯函数
 
 
 def test_frame_vector_is_pure() -> None:
-    """The same Frame must always encode to the same vector (unaffected by facing/internal state)."""
+    """同一个 Frame 必须永远编码成同一个向量（不受朝向/内部状态影响）。"""
     f = Frame(
         frame=1,
         p1=PlayerFrame(x=10, y=0, hp=900, mp=50, state=1, facing=-1),
@@ -59,21 +57,21 @@ def test_frame_vector_is_pure() -> None:
     )
     a, b = frame_vector(f), frame_vector(f)
     assert a.shape == (FRAME_DIM,)
-    assert np.array_equal(a, b), "encoding the same frame twice gave different results"
+    assert np.array_equal(a, b), "同一帧两次编码结果不一致"
 
     flipped = Frame(
         frame=1,
         p1=PlayerFrame(x=10, y=0, hp=900, mp=50, state=1, facing=1),
         p2=PlayerFrame(x=-200, y=0, hp=800, mp=10, state=2, facing=-1),
     )
-    assert frame_vector(flipped)[0] == a[0], "P1's x slot must not flip with facing (frame stacking would misalign)"
+    assert frame_vector(flipped)[0] == a[0], "P1 的 x 槽位不应随朝向翻转（帧堆叠会错位）"
 
 
-# ---------------------------------------------------------------- 2. Frame stacking is exact
+# ---------------------------------------------------------------- 2. 帧堆叠精确
 
 
 def test_state_builder_stacking_is_exact() -> None:
-    """After the builder pushes N frames, obs must equal the concatenation of the corresponding frame vectors."""
+    """builder 推 N 帧后，obs 必须等于对应帧向量的拼接。"""
     builder = StateBuilder()
     frames = [
         Frame(
@@ -87,27 +85,24 @@ def test_state_builder_stacking_is_exact() -> None:
         snap = builder.push(f)
         prev_vec = frame_vector(frames[i - 1]) if i >= 1 else ZERO
         expected = np.concatenate([prev_vec, frame_vector(f)]).astype(np.float32)
-        assert snap.obs.shape == (OBS_DIM,), f"observation dimension should be {OBS_DIM}"
-        assert np.allclose(snap.obs, expected, atol=1e-6), f"stacking is wrong at frame {i}"
+        assert snap.obs.shape == (OBS_DIM,), f"观测维度应为 {OBS_DIM}"
+        assert np.allclose(snap.obs, expected, atol=1e-6), f"第 {i} 帧堆叠不对"
 
 
-# ---------------------------------------------------------------- 3. End-to-end alignment
+# ---------------------------------------------------------------- 3. 端到端对齐
 
 
 def test_transition_matches_true_frames() -> None:
-    """End to end: running actions back to back in the mock game, obs/next_obs must
-    correspond to the real before/after frames.
+    """端到端：模拟游戏里连续走动作，obs/next_obs 必须对应真实的前后两帧。
 
-    This is the most direct guard for "action-effective frame vs recorded frame": on one
-    side we run the same call order as the main loop, on the other we independently
-    rebuild the observation from noise-free ground-truth frames; the two must be
-    element-wise equal.
+    这是"动作生效帧 vs 记录帧"最直接的守卫：一边跑主循环同样的调用顺序，
+    一边用不夹噪声的真值帧独立重建观测，两边必须逐元素相等。
     """
     game = MockGame(
         seed=5, input_lag=1, noise=0.0, cpu_enabled=False, round_reset=False
     ).start()
-    builder = StateBuilder()          # under test: same call order as collect_data
-    reference = StateBuilder()        # reference: eats ground-truth frames only
+    builder = StateBuilder()          # 被测：和 collect_data 一样的调用顺序
+    reference = StateBuilder()        # 基准：只吃真值帧
     try:
         time.sleep(FRAME_DT * 3)
         first = game.read_frame()
@@ -115,7 +110,7 @@ def test_transition_matches_true_frames() -> None:
         truth = _truth_frame(raw[0], raw[1], first.frame)
         snap = builder.push(first)
         ref = reference.push(truth)
-        assert np.allclose(snap.obs, ref.obs, atol=1e-6), "first frame observation does not match ground truth"
+        assert np.allclose(snap.obs, ref.obs, atol=1e-6), "首帧观测与真值不一致"
 
         for action in ("right", "attack", "heavy", "left", "jump", "skill"):
             time.sleep(FRAME_DT * 2)
@@ -125,7 +120,7 @@ def test_transition_matches_true_frames() -> None:
             truth_prev = _truth_frame(raw_prev[0], raw_prev[1], prev_frame.frame)
             assert np.allclose(
                 prev_snap.obs[-FRAME_DIM:], frame_vector(truth_prev), atol=1e-6
-            ), f"{action}: pre-action observation does not match the ground-truth frame"
+            ), f"{action}: 动作前观测与真值帧不一致"
 
             game.apply_action(action)
             time.sleep(FRAME_DT * 4)
@@ -139,15 +134,15 @@ def test_transition_matches_true_frames() -> None:
 
             assert np.allclose(
                 curr_snap.obs[-FRAME_DIM:], frame_vector(truth_curr), atol=1e-6
-            ), f"{action}: next_obs's current-frame slot does not match the ground-truth frame"
+            ), f"{action}: next_obs 的当前帧槽位与真值帧不一致"
             assert np.allclose(
                 ref_next.obs, curr_snap.obs, atol=1e-6
-            ), f"{action}: frame stacking history is inconsistent (pushed too many/too few frames)"
+            ), f"{action}: 帧堆叠历史不一致（多推/少推了帧）"
     finally:
         game.stop()
 
 
-# ---------------------------------------------------------------- 4. Reward
+# ---------------------------------------------------------------- 4. 奖励
 
 
 def test_reward_matches_hp_delta() -> None:
@@ -166,27 +161,26 @@ def test_reward_matches_hp_delta() -> None:
         p1=PlayerFrame(x=0, hp=900, mp=0),
         p2=PlayerFrame(x=100, hp=1000, mp=0),
     )
-    assert compute_reward(base, hit) > 0.9, "hitting the opponent should be positive reward"
-    assert compute_reward(base, hurt) < -0.9, "getting hit by the opponent should be negative reward"
-    assert abs(compute_reward(base, base) + 0.001) < 1e-9, "an idle frame only carries the per-frame penalty"
+    assert compute_reward(base, hit) > 0.9, "打中对手应该是正奖励"
+    assert compute_reward(base, hurt) < -0.9, "被对手打中应该是负奖励"
+    assert abs(compute_reward(base, base) + 0.001) < 1e-9, "空帧只有每帧惩罚"
 
     win = Frame(
         frame=2,
         p1=PlayerFrame(x=0, hp=500, mp=0),
         p2=PlayerFrame(x=100, hp=0, mp=0),
     )
-    assert compute_reward(base, win) >= 10.0, "opponent knockdown should give +10"
+    assert compute_reward(base, win) >= 10.0, "对手倒地应给 +10"
 
 
-# ---------------------------------------------------------------- 5. The mock game itself
+# ---------------------------------------------------------------- 5. 模拟游戏本身
 
 
 def _wait_for_state(game: MockGame, want: int, timeout: float = 0.6) -> int:
-    """Poll until the state number becomes want; on timeout return the last value read.
+    """轮询等待状态号变成 want；超时返回最后一次读到的值。
 
-    More robust than "sleep a fixed number of frames": actions have different start-up
-    frames (normal attack 4 frames, special 10 frames), so a fixed wait easily reads a
-    state that has not started yet or has already ended.
+    比"固定 sleep 几帧"稳：动作的启动帧不同（普攻 4 帧、必杀 10 帧），
+    固定等待容易读到还没起手或已经结束的状态。
     """
     deadline = time.perf_counter() + timeout
     last = -1
@@ -199,7 +193,7 @@ def _wait_for_state(game: MockGame, want: int, timeout: float = 0.6) -> int:
 
 
 def _wait_idle(game: MockGame, timeout: float = 1.5) -> None:
-    """Wait for the action to finish playing (state back to idle or walk)."""
+    """等动作播完（状态回到 idle 或 walk）。"""
     deadline = time.perf_counter() + timeout
     while time.perf_counter() < deadline:
         st = game.read_frame().p1.state
@@ -209,14 +203,12 @@ def _wait_idle(game: MockGame, timeout: float = 1.5) -> None:
 
 
 def _clean_slate(game: MockGame, timeout: float = 1.0) -> None:
-    """Clear the input state and wait for the action to end.
+    """把输入状态清干净并等动作结束。
 
-    Why this is mandatory: combos like `skill1` (↓+J) **hold the modifier key** (down)
-    for several frames. If we send the next action before it has finished releasing, the
-    leftover down combines with the next action's key and gets judged as a different
-    move — for example a lone `bisha` (I) is misread as `↓+I` (super).
-    This is not a mock bug: in the real game, with the hand still holding down, it really
-    is "down + special".
+    为什么必须清：`skill1`(↓+J) 之类的组合技会**按住修饰键**（down）若干帧。
+    如果不等它松完就发下一个动作，残留的 down 会和下一个动作的按键组合起来，
+    被判成另一个招式 —— 例如单按 `bisha`(I) 会被误判成 `↓+I`（超必杀）。
+    这不是 mock 的 bug：真实游戏里手一直按着下键，也确实是"下+必杀"。
     """
     game.release_all()
     deadline = time.perf_counter() + timeout
@@ -230,7 +222,7 @@ def _clean_slate(game: MockGame, timeout: float = 1.0) -> None:
 
 
 def test_mock_action_effects_are_visible() -> None:
-    """Every action must leave an observable trace in the state (otherwise what we collect is dead data)."""
+    """每个动作都必须在状态里留下可观测痕迹（否则采集到的是死数据）。"""
     game = MockGame(
         seed=9, input_lag=0, noise=0.0, cpu_enabled=False, round_reset=False
     ).start()
@@ -240,31 +232,30 @@ def test_mock_action_effects_are_visible() -> None:
         game.apply_action("right")
         time.sleep(FRAME_DT * 10)
         after = game.read_frame()
-        assert after.p1.x > before.p1.x + 5, "right should move P1 to the right"
+        assert after.p1.x > before.p1.x + 5, "right 应该让 P1 向右移动"
 
         game.apply_action("jump")
         highest = 0.0
         for _ in range(14):
             time.sleep(FRAME_DT)
             highest = min(highest, game.read_frame().p1.y)
-        # y is a screen coordinate: up is negative, so "jumped" = the minimum y is clearly below 0
-        assert highest < -5, f"jump should make y negative (off the ground), actual min y = {highest:.1f}"
+        # y 是屏幕坐标：向上为负，所以"跳起来"= y 的最小值明显小于 0
+        assert highest < -5, f"jump 应该让 y 变负（离地），实际最小 y = {highest:.1f}"
         _wait_idle(game)
 
         game.p1.mp = 300.0
         game.apply_action("zhao1")
         got = _wait_for_state(game, 7)
-        assert got == 7, f"zhao1(U) should enter skill state number 7, actual {got}"
+        assert got == 7, f"zhao1(U) 应该进入技能状态号 7，实际 {got}"
     finally:
         game.stop()
 
 
 def test_new_actions_have_distinct_effects() -> None:
-    """Among the expanded 13 actions, the new moves must each produce a **different** state number.
+    """扩展后的 13 动作里，新增的招式必须各自产生**不同**的状态号。
 
-    This guards against "phantom action-space expansion": if the 5 new actions all map to
-    the same state, the network cannot learn the difference, and expanding the action set
-    was pointless.
+    这是防止"动作空间虚扩"：如果 5 个新动作都映射到同一个状态，
+    网络学不到区别，扩动作就白扩了。
     """
     expected = {
         "attack": 3,
@@ -275,8 +266,8 @@ def test_new_actions_have_distinct_effects() -> None:
         "bishaSUPER": 13,
         "assist": 8,
     }
-    # state numbers must be pairwise distinct
-    assert len(set(expected.values())) == len(expected), "duplicate state numbers in the test table"
+    # 状态号必须互不重复
+    assert len(set(expected.values())) == len(expected), "测试表里状态号有重复"
 
     game = MockGame(
         seed=21, input_lag=0, noise=0.0, cpu_enabled=False, round_reset=False
@@ -285,28 +276,27 @@ def test_new_actions_have_distinct_effects() -> None:
     try:
         time.sleep(FRAME_DT * 2)
         for action, want_state in expected.items():
-            _clean_slate(game)          # clear the modifier key left over from the previous action (see the function docstring)
-            game.p1.mp = 300.0          # specials need qi
+            _clean_slate(game)          # 清掉上个动作残留的修饰键（见函数注释）
+            game.p1.mp = 300.0          # 必杀需要气
             game.apply_action(action)
             got = _wait_for_state(game, want_state)
             got_all[action] = got
         for action, want_state in expected.items():
             assert got_all[action] == want_state, (
-                f"{action} should enter state {want_state}, actual {got_all[action]}"
+                f"{action} 应进入状态 {want_state}，实际 {got_all[action]}"
             )
-        # the state numbers actually read must also be pairwise distinct (two actions must not map to the same state)
+        # 实际读到的状态号也必须互不重复（不能两个动作映射到同一个状态）
         vals = list(got_all.values())
-        assert len(set(vals)) == len(vals), f"actions share a state number: {got_all}"
+        assert len(set(vals)) == len(vals), f"有动作共享状态号: {got_all}"
     finally:
         game.stop()
 
 
 def test_combo_action_presses_modifier_and_action() -> None:
-    """A combo must issue the modifier key + action key **at the same time** (source skill1 = down && attack).
+    """组合技必须**同时**发出修饰键 + 动作键（源码 skill1 = down && attack）。
 
-    Send only the action key without the modifier and the game does not treat it as a
-    combo; it silently degrades to a normal attack — this is the easiest place to get
-    wrong and the hardest to notice.
+    只发动作键而没有修饰键，游戏就不认为是组合技，会静默退化成普攻 ——
+    这是最容易出错、也最难看出来的地方。
     """
     game = MockGame(
         seed=33, input_lag=0, noise=0.0, cpu_enabled=False, round_reset=False
@@ -319,10 +309,10 @@ def test_combo_action_presses_modifier_and_action() -> None:
         got = _wait_for_state(game, 10)
         consumed = set(game._consumed_keys)
         assert "attack" in consumed and "down" in consumed, (
-            f"skill1 should emit down + attack; keys actually recorded: {consumed}"
+            f"skill1 应该发出 down + attack；实际记录到的按键: {consumed}"
         )
         assert got == 10, (
-            f"skill1 should enter state 10 (not the normal attack's 3), actual {got}"
+            f"skill1 应进入状态 10（不是普攻的 3），实际 {got}"
         )
     finally:
         game.stop()
@@ -341,7 +331,7 @@ def _run_all() -> int:
         except Exception as exc:  # noqa: BLE001
             failed += 1
             print(f"  ERROR {fn.__name__}: {type(exc).__name__}: {exc}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    print(f"\n{len(tests) - failed}/{len(tests)} 通过")
     return 1 if failed else 0
 
 

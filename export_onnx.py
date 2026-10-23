@@ -1,18 +1,15 @@
-"""Stage 5 (first half): export ONNX and verify numerical agreement.
+"""阶段 5（上半）：导出 ONNX 并做数值一致性验证。
 
-Two graphs are exported (both take only observations and output action values, with no
-dynamic control flow at all -- the friendliest thing for onnxruntime):
+导出两份图（都只吃观测、吐动作值，没有任何动态控制流，对 onnxruntime 最友好）：
 
-    <run>/policy.onnx : obs(1,100) -> logits(1,9)    behaviour-cloning policy
-    <run>/qnet.onnx   : obs(1,100) -> q_values(1,9)  DQN action values
+    <run>/policy.onnx : obs(1,100) -> logits(1,9)   行为克隆策略
+    <run>/qnet.onnx   : obs(1,100) -> q_values(1,9) DQN 动作价值
 
-Two things are verified:
-  1. onnxruntime output matches the original PyTorch model element by element
-     (default tolerance 1e-4)
-  2. On 200 random samples the argmax action matches exactly (this is the decision
-     actually used at runtime)
+验证两件事：
+  1. onnxruntime 的输出与 PyTorch 原模型输出逐元素一致（默认容差 1e-4）
+  2. 随机 200 条样本上 argmax 动作完全一致（这是实际会用的决策）
 
-Usage::
+用法::
 
     python export_onnx.py --run runs/demo
     python export_onnx.py --run runs/demo --which q
@@ -39,10 +36,10 @@ from state import FEATURE_NAMES, FRAME_STACK, FRAME_DIM, OBS_DIM  # noqa: E402
 try:
     import onnxruntime as ort
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit("onnxruntime is required: python -m pip install onnxruntime") from exc
+    raise SystemExit("需要 onnxruntime：python -m pip install onnxruntime") from exc
 
 
-# ---------------------------------------------------------------- load weights
+# ---------------------------------------------------------------- 加载权重
 
 
 def load_net(kind: str, ckpt: Path, device: torch.device) -> torch.nn.Module:
@@ -52,7 +49,7 @@ def load_net(kind: str, ckpt: Path, device: torch.device) -> torch.nn.Module:
     n_actions = int(payload.get("n_actions", NUM_ACTIONS))
     if obs_dim != OBS_DIM:
         raise SystemExit(
-            f"{ckpt} has obs_dim={obs_dim} but the current code uses OBS_DIM={OBS_DIM}; cannot export."
+            f"{ckpt} 的 obs_dim={obs_dim} 与当前代码 OBS_DIM={OBS_DIM} 不一致，无法导出。"
         )
     cls = PolicyNet if kind == "policy" else QNet
     net = cls(obs_dim, n_actions, hidden).to(device)
@@ -71,9 +68,8 @@ def export_one(
 ) -> dict[str, Any]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.as_tensor(sample, dtype=torch.float32, device=device)
-    # dyn=False takes the traditional export path: the graph is simple and the
-    # onnxruntime compatibility is the best. Without the onnx package installed
-    # torch just errors out, so we print an explicit hint here.
+    # dyn=False 走传统导出路径：结构简单、onnxruntime 兼容性最好。
+    # 未安装 onnx 包时 torch 会直接报错，所以这里给出明确提示。
     try:
         torch.onnx.export(
             net,
@@ -89,12 +85,12 @@ def export_one(
     except Exception as exc:  # noqa: BLE001
         if "onnx" in str(exc).lower() and "not installed" in str(exc).lower():
             raise SystemExit(
-                "torch needs the onnx package to export ONNX (installing only onnxruntime is not enough):\n"
+                "torch 导出 ONNX 需要 onnx 包（只装 onnxruntime 不够）：\n"
                 "  python -m pip install onnx onnxruntime"
             ) from exc
         raise
 
-    # ---- numerical agreement
+    # ---- 数值一致性
     sess = ort.InferenceSession(str(out_path), providers=["CPUExecutionProvider"])
     in_name = sess.get_inputs()[0].name
 
@@ -130,20 +126,20 @@ def export_one(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Stage 5: export ONNX + agreement check")
-    parser.add_argument("--run", required=True, help="training output directory (holds model_bc.pt/model_q.pt)")
+    parser = argparse.ArgumentParser(description="阶段 5：导出 ONNX + 一致性验证")
+    parser.add_argument("--run", required=True, help="训练输出目录（含 model_bc.pt/model_q.pt）")
     parser.add_argument("--which", choices=["both", "policy", "q", "bc"], default="both",
-                        help="which one to export (q=DQN net, policy/bc=behaviour-cloning policy, both by default)")
-    parser.add_argument("--out", default=None, help="output directory (the run directory by default)")
-    parser.add_argument("--tolerance", type=float, default=1e-4, help="max allowed absolute error")
-    parser.add_argument("--samples", type=int, default=200, help="number of random probes")
-    parser.add_argument("--device", default="cpu", help="always export on cpu (avoids device-specific operators)")
+                        help="导出哪个（q=DQN 网络，policy/bc=行为克隆策略，默认两个都导）")
+    parser.add_argument("--out", default=None, help="输出目录（默认就是 run 目录）")
+    parser.add_argument("--tolerance", type=float, default=1e-4, help="最大允许绝对误差")
+    parser.add_argument("--samples", type=int, default=200, help="随机探针数量")
+    parser.add_argument("--device", default="cpu", help="导出统一用 cpu（避免设备相关算子）")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     ensure_dirs()
     run_dir = Path(args.run)
     if not run_dir.exists():
-        print(f"[onnx] run directory does not exist: {run_dir}")
+        print(f"[onnx] 运行目录不存在: {run_dir}")
         return 2
     out_dir = Path(args.out) if args.out else run_dir
     device = pick_device(args.device)
@@ -159,7 +155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     failed = 0
     for kind, filename, ckpt in want:
         if not ckpt.exists():
-            print(f"[onnx] skipping {kind}: {ckpt} not found")
+            print(f"[onnx] 跳过 {kind}: 找不到 {ckpt}")
             continue
         net = load_net(kind, ckpt, device)
         out_path = out_dir / filename
@@ -170,20 +166,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"[onnx] {status} {filename:<12} "
             f"max|Δ|={report['max_abs_diff']:.3e}  "
             f"mean|Δ|={report['mean_abs_diff']:.3e}  "
-            f"argmax match={report['argmax_agreement'] * 100:.1f}%  "
+            f"argmax一致={report['argmax_agreement'] * 100:.1f}%  "
             f"{report['size_kb']}KB"
         )
         if not report["passed"]:
             failed += 1
-            print(f"       diff exceeds tolerance {args.tolerance}. Possible causes: device mismatch, "
-                  "opset too low, or a NaN in the weights.")
+            print(f"       差异超过容差 {args.tolerance}。可能原因：设备不一致、"
+                  "opset 太低、或权重里有 NaN。")
 
     if not reports:
-        print("[onnx] no model was exported. Run train.py first.")
+        print("[onnx] 没有任何模型被导出。先跑 train.py。")
         return 2
 
-    # torch.onnx.export may have restarted Python, so do the optional structural
-    # check once more here
+    # torch.onnx.export 时可能重启过 Python，这里补一次可选的结构校验
     onnx_check: dict[str, Any] = {"available": False}
     try:
         import onnx  # type: ignore
@@ -193,13 +188,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             model = onnx.load(report["file"])
             onnx.checker.check_model(model)
             onnx_check[kind] = "ok"
-        print("[onnx] onnx.checker structural check passed")
+        print("[onnx] onnx.checker 结构校验通过")
     except ImportError:
-        print("[onnx] (onnx package not installed, skipping the onnx.checker structural "
-              "check; numerical agreement was already verified by onnxruntime)")
+        print("[onnx] （未安装 onnx 包，跳过 onnx.checker 结构校验；"
+              "数值一致性已由 onnxruntime 验证）")
     except Exception as exc:  # noqa: BLE001
         onnx_check["error"] = str(exc)
-        print(f"[onnx][warn] onnx.checker raised: {exc}")
+        print(f"[onnx][warn] onnx.checker 报错: {exc}")
 
     meta = {
         "obs_dim": OBS_DIM,
@@ -214,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     meta_path = out_dir / "model_meta.json"
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[onnx] metadata: {meta_path}")
+    print(f"[onnx] 元数据: {meta_path}")
     return 1 if failed else 0
 
 

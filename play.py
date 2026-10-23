@@ -1,39 +1,37 @@
-"""★ One command to start a match and fight ★ —— no more retyping all those arguments.
+"""★ 一条命令开局并开打 ★ —— 不用再重复输那堆参数。
 
-**User complaint**: "why do I still have to type all this match-start stuff over and over again"
+**用户抱怨**：「现在输入这些开局的东西怎么还要输这么多遍」
 
-**Why the complaint exists**: I used to hand-type every single time
+**为什么会有这个抱怨**：我之前每次都手打
 ```
 python repair_panel.py --p1 ichigo --p2 naruto --fps 60
 python go_vscpu.py --p1 ichigo --p2 naruto --p1-fz kon --p2-fz gaara --launch "..."
 ```
-and inside that **ichigo / kon / naruto / gaara / GenSe / 60 are the same every round** ——
-there is no reason at all to retype them every time.
+而这里面 **ichigo / kon / naruto / gaara / GenSe / 60 每局都一样** ——
+完全不该每次重打。
 
-**The fix**: write the config once (`start_config.json`), after that one command does it all:
+**修法**：配置只写一次（`start_config.json`），之后一条命令搞定：
 ```
-python play.py                     # rule policy, 1 round (default)
-python play.py --rounds 3          # rule policy, 3 rounds
-python play.py --model             # use the current best model (the DAgger one)
+python play.py                     # 规则策略，1 局（默认）
+python play.py --rounds 3          # 规则策略，3 局
+python play.py --model             # 用当前最好的模型（DAgger 那版）
 python play.py --model --rounds 4
-python play.py --show              # view / edit the config
-python play.py --p1 renji --p2 byakuya   # temporarily swap characters (recorded in the config)
+python play.py --show              # 看/改配置
+python play.py --p1 renji --p2 byakuya   # 临时换角色（会记进配置）
 ```
 
-Flow (fully automatic):
-  1. read the config (writes the defaults on first run)
-  2. write the panel + **read it back to verify** (rewrite on failure, up to 3 times)
-  3. click "Start Test"
-  4. **immediately** start the controller (via `go_vscpu --launch`, so the match does not start standing still)
-  5. print the results once the match is over
+流程（全自动）：
+  1. 读配置（首次自动写默认值）
+  2. 写面板 + **读回校验**（失败就重写，最多 3 次）
+  3. 点「开始测试」
+  4. **立刻**启动控制器（用 `go_vscpu --launch`，所以开局不站着不动）
+  5. 打完打印战绩
 
-Usage::
+用法::
     python play.py --help
 """
 
 from __future__ import annotations
-
-from version import __version__ as _BVN_VERSION
 
 import argparse
 import json
@@ -52,7 +50,7 @@ DEFAULT_CFG = {
     "map": "GenSe",
     "fps": "60",
     "recv_hp": "1",
-    # By default use the **rule policy**; with `--model` use the ONNX below
+    # 默认用**规则策略**；`--model` 时用下面这个 ONNX
     "model": "runs/rule_v2dagger/qnet.onnx",
     "rounds": 1,
     "seconds": 150.0,
@@ -69,7 +67,7 @@ def load_cfg() -> dict:
             pass
     CFG.write_text(json.dumps(DEFAULT_CFG, ensure_ascii=False, indent=2),
                    encoding="utf-8")
-    print(f"[play] wrote the default config {CFG.name} —— you never have to type these values again")
+    print(f"[play] 已写入默认配置 {CFG.name} —— 以后不用再打这些值")
     return dict(DEFAULT_CFG)
 
 
@@ -79,39 +77,34 @@ def save_cfg(cfg: dict) -> None:
 
 
 
-# Resolved from BVN_GAME_DIR (or ./game) **lazily**.
-#   Resolving at import time would make `--help` / `--version` fail on a
-#   machine that does not have the game installed -- every CLI must be
-#   able to print its usage anywhere.
-from bvn_paths import game_exe as _game_exe_resolve
+GAME_EXE = Path(r"C:\Users\31673\Downloads\swf_output\swf_output\FighterTester.exe")
 
 
 def _ensure_game(wait_s: float = 100.0) -> bool:
-    """Launch the game automatically if it isn't running, and wait until both the window and the panel are ready."""
-    from input_controller import find_window  # local import, avoids top-level side effects
+    """游戏没开就自动开，并等到窗口 + 面板都就绪。"""
+    from input_controller import find_window  # 局部导入，避免顶层副作用
     if find_window("火影"):
         return True
-    game_exe = _game_exe_resolve()
-    if not game_exe.exists():
-        print(f"[play] ❌ game not found {game_exe}")
+    if not GAME_EXE.exists():
+        print(f"[play] ❌ 找不到游戏 {GAME_EXE}")
         return False
-    print(f"[play] game not running -> launching {game_exe.name}")
-    subprocess.Popen([str(game_exe)], cwd=str(game_exe.parent))
+    print(f"[play] 游戏没开 -> 自动启动 {GAME_EXE.name}")
+    subprocess.Popen([str(GAME_EXE)], cwd=str(GAME_EXE.parent))
     import time
     t0 = time.time()
     while time.time() - t0 < wait_s:
         if find_window("火影"):
-            # once the window is up, wait a bit longer for it to load into the test screen
+            # 窗口出现后再等一会，让它加载到测试界面
             time.sleep(12.0)
-            print(f"[play] ✅ game window ready (waited {time.time() - t0:.0f}s)")
+            print(f"[play] ✅ 游戏窗口就绪（等了 {time.time() - t0:.0f}s）")
             return True
         time.sleep(1.0)
-    print(f"[play] ❌ waited {wait_s:.0f}s and still no game window")
+    print(f"[play] ❌ 等了 {wait_s:.0f}s 还没看到游戏窗口")
     return False
 
 
 def _fix_window() -> None:
-    """Window size correction (the client area must be 1000x600, otherwise every panel coordinate is off)."""
+    """窗口尺寸校正（客户区必须 1000x600，否则面板坐标全歪）。"""
     r = subprocess.run([sys.executable, "fix_window.py"],
                        capture_output=True, text=True, cwd=str(ROOT))
     out = (r.stdout or "").strip().splitlines()
@@ -121,9 +114,7 @@ def _fix_window() -> None:
 def main() -> int:
     cfg = load_cfg()
     ap = argparse.ArgumentParser(
-        description="start a match and fight with one command (the config is written once)")
-    ap.add_argument("--version", action="version",
-                    version=f"bvn-ai {_BVN_VERSION}")
+        description="一条命令开局并开打（配置只写一次）")
     ap.add_argument("--p1", default=cfg["p1"])
     ap.add_argument("--p2", default=cfg["p2"])
     ap.add_argument("--p1-fz", dest="p1_fz", default=cfg["p1_fz"])
@@ -132,25 +123,25 @@ def main() -> int:
     ap.add_argument("--fps", default=cfg["fps"])
     ap.add_argument("--recv-hp", dest="recv_hp", default=cfg["recv_hp"])
     ap.add_argument("--model", action="store_true",
-                    help=f"use the model (default {cfg['model']}) instead of the rule policy")
-    ap.add_argument("--onnx", default=None, help="specify an ONNX (implies --model)")
+                    help=f"用模型（默认 {cfg['model']}）而不是规则策略")
+    ap.add_argument("--onnx", default=None, help="指定 ONNX（隐含 --model）")
     ap.add_argument("--rounds", type=int, default=cfg["rounds"])
     ap.add_argument("--seconds", type=float, default=cfg["seconds"])
     ap.add_argument("--temperature", type=float, default=cfg["temperature"])
-    ap.add_argument("--show", action="store_true", help="only print the current config")
+    ap.add_argument("--show", action="store_true", help="只打印当前配置")
     ap.add_argument("--no-start", action="store_true",
-                    help="only write + verify the panel, do not click Start Test")
+                    help="只写面板+校验，不点开始测试")
     args = ap.parse_args()
 
     if args.show:
-        print(f"[play] config file {CFG}")
+        print(f"[play] 配置文件 {CFG}")
         for k, v in cfg.items():
             print(f"   {k:<12} {v}")
-        print("\n   how to change: python play.py --p1 renji --p2 byakuya"
-              "(it gets remembered in the config)")
+        print("\n   改法：python play.py --p1 renji --p2 byakuya"
+              "（会记进配置）")
         return 0
 
-    # Write the config back (nothing to retype next time)
+    # 记回配置（下次不用再打）
     new = {"p1": args.p1, "p2": args.p2, "p1_fz": args.p1_fz,
            "p2_fz": args.p2_fz, "map": args.map, "fps": args.fps,
            "recv_hp": args.recv_hp, "rounds": args.rounds,
@@ -158,10 +149,10 @@ def main() -> int:
            "model": args.onnx or cfg["model"]}
     if new != cfg:
         save_cfg(new)
-        print(f"[play] config remembered ({CFG.name})")
+        print(f"[play] 配置已记住（{CFG.name}）")
     cfg = new
 
-    # ★ auto-launch the game if it isn't running + fix the window (only then is it truly "one command") ★
+    # ★ 游戏没开就自动开 + 校正窗口（才能真正"一条命令"）★
     if not _ensure_game():
         return 2
     _fix_window()
@@ -169,7 +160,7 @@ def main() -> int:
     out = ROOT / "runs" / "watch_me"
     out.mkdir(parents=True, exist_ok=True)
 
-    # Build the controller command (play_real fights the rounds)
+    # 构造控制器命令（play_real 打小局）
     if args.onnx or args.model:
         onnx = args.onnx or cfg["model"]
         ctl = (f'python play_real.py --onnx {onnx} --matches {args.rounds} '
@@ -177,14 +168,14 @@ def main() -> int:
                f'--temperature {args.temperature} '
                f'--respawn-wait 25 --full-hp-ratio 0.0 '
                f'--out runs\\watch_me\\run.json')
-        who = f"model {onnx}"
+        who = f"模型 {onnx}"
     else:
         ctl = (f'python play_real.py --rule --matches {args.rounds} '
                f'--seconds {args.seconds} --hz 60 '
                f'--out runs\\watch_me\\run.json')
-        who = "rule policy"
+        who = "规则策略"
 
-    print(f"[play] {who}  {args.rounds} rounds x {args.seconds:.0f}s  "
+    print(f"[play] {who}  {args.rounds} 局 x {args.seconds:.0f}s  "
           f"@{args.fps}fps")
     print(f"[play] {args.p1}+{args.p1_fz}  vs  {args.p2}+{args.p2_fz}  "
           f"({args.map})")

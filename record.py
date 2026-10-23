@@ -1,8 +1,7 @@
-"""Data recording: in-memory buffer -> csv (for eyeballing) + npz (for training).
+"""数据记录：内存缓冲 -> csv（人工检查）+ npz（训练用）。
 
-The csv holds only the columns a human wants to look at (frame number, action,
-reward, both sides' HP and coordinates); the npz holds the full observation
-vector, so we don't stuff 100 columns of floats into the csv.
+csv 只放人眼想看的列（帧号、动作、奖励、双方血量坐标），
+npz 放完整观测向量，避免 csv 里塞 100 列浮点数。
 """
 
 from __future__ import annotations
@@ -38,12 +37,17 @@ CSV_HEADER: tuple[str, ...] = (
     "p2_mp",
     "p2_state",
     "p2_facing",
+    # ★ DAgger 专用：真正发给游戏的动作 ★
+    #   DAgger 时 `action` 是**规则给标签**、`sent` 才是模型实际发出的动作。
+    #   没有这一列，就无法从 CSV 诊断"模型自己打得怎么样"（只能看到规则的意图）。
+    "sent",
+    "sent_index",
 )
 
 
 @dataclass
 class Episode:
-    """All the data from one collection run."""
+    """一次采集运行的全部数据。"""
 
     name: str = "episode"
     obs: list[np.ndarray] = field(default_factory=list)
@@ -55,6 +59,7 @@ class Episode:
     timestamps: list[float] = field(default_factory=list)
     prev_raw: list[Frame] = field(default_factory=list)
     curr_raw: list[Frame] = field(default_factory=list)
+    sent: list[int] = field(default_factory=list)   # 实际发出的动作（DAgger 时 != action）
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __len__(self) -> int:
@@ -71,10 +76,12 @@ class Episode:
         prev: Frame,
         curr: Frame,
         timestamp: float | None = None,
+        sent: int | None = None,
     ) -> None:
         self.obs.append(np.asarray(obs, dtype=np.float32))
         self.next_obs.append(np.asarray(next_obs, dtype=np.float32))
         self.actions.append(int(action))
+        self.sent.append(int(action) if sent is None else int(sent))
         self.rewards.append(float(reward))
         self.dones.append(bool(done))
         self.frames.append(int(frame))
@@ -83,10 +90,10 @@ class Episode:
         if timestamp is not None:
             self.timestamps.append(float(timestamp))
 
-    # -------------------------------------------------- write to disk
+    # -------------------------------------------------- 落盘
 
     def summary(self) -> dict[str, Any]:
-        """Summary stats (**without** meta, so that storing summary inside meta can't create a cyclic reference)."""
+        """统计信息（**不含** meta，避免 meta 里存 summary 造成循环引用）。"""
         if not self.actions:
             return {"steps": 0}
         actions = np.asarray(self.actions)
@@ -133,6 +140,7 @@ class Episode:
             for i, action in enumerate(self.actions):
                 prev = self.prev_raw[i]
                 curr = self.curr_raw[i]
+                sent = self.sent[i] if i < len(self.sent) else action
                 writer.writerow(
                     [
                         self.frames[i],
@@ -153,6 +161,8 @@ class Episode:
                         f"{prev.p2.mp:.2f}",
                         prev.p2.state,
                         prev.p2.facing,
+                        ACTIONS[sent],
+                        sent,
                     ]
                 )
         return path
@@ -175,46 +185,45 @@ def read_csv_rows(path: str | Path, limit: int | None = None) -> list[dict[str, 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Check one collected dataset for integrity (frame alignment + reward distribution)."""
+    """检查一份采集数据的完整性（帧对齐 + 奖励分布）。"""
     import argparse
 
-    parser = argparse.ArgumentParser(description="check collected data")
-    parser.add_argument("npz", help="path to the npz file")
-    parser.add_argument("--csv", help="also print the first few csv rows")
+    parser = argparse.ArgumentParser(description="检查采集数据")
+    parser.add_argument("npz", help="npz 文件路径")
+    parser.add_argument("--csv", help="同时打印 csv 前几行")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     data = load_npz(args.npz)
     obs, nxt = data["obs"], data["next_obs"]
     actions = data["actions"]
     rewards = data["rewards"]
-    print(f"samples : {len(actions)}")
+    print(f"样本数 : {len(actions)}")
     print(f"obs    : {obs.shape} dtype={obs.dtype}")
     print(f"next   : {nxt.shape}")
-    print(f"action dist: {np.bincount(actions, minlength=len(ACTIONS)).tolist()} -> {list(ACTIONS)}")
-    print(f"reward : sum={rewards.sum():.2f} mean={rewards.mean():+.4f} "
-          f"pos={int((rewards > 0).sum())} neg={int((rewards < 0).sum())}")
+    print(f"动作分布: {np.bincount(actions, minlength=len(ACTIONS)).tolist()} -> {list(ACTIONS)}")
+    print(f"奖励   : sum={rewards.sum():.2f} mean={rewards.mean():+.4f} "
+          f"正={int((rewards > 0).sum())} 负={int((rewards < 0).sum())}")
 
-    # Frame-alignment self-check: obs[t+1] must be exactly equal to next_obs[t].
-    # Both are produced by the same StateBuilder on adjacent ticks with a history
-    # window one frame apart, so apart from t=0 they should match element-wise.
-    # Any deviation means the collection loop is misaligned.
+    # 帧对齐自检：obs[t+1] 必须精确等于 next_obs[t]。
+    # 两者由同一个 StateBuilder 在相邻 tick 产出，历史窗口只差一帧，
+    # 所以除了 t=0 之外应当逐元素相等。任何偏差都说明采集循环错位了。
     if len(obs) > 1:
         left = obs[1:]
         right = nxt[:-1]
         diff = float(np.abs(left - right).max())
-        status = "OK" if diff < 1e-5 else "MISALIGNED!"
+        status = "OK" if diff < 1e-5 else "不对齐！"
         print(
-            f"frame alignment: {status} obs[t+1] vs next_obs[t] "
-            f"max deviation {diff:.3e} (compared {len(left)} pairs)"
+            f"帧对齐检查    : {status} obs[t+1] vs next_obs[t] "
+            f"最大偏差 {diff:.3e} (比较 {len(left)} 对)"
         )
         if diff >= 1e-5:
             bad = int((np.abs(left - right).max(axis=1) >= 1e-5).sum())
-            print(f"                {bad} pairs mismatch — obs/next_obs are misaligned "
-                  "in the collection loop, this batch cannot be used for training")
+            print(f"                {bad} 对不匹配 —— 采集循环里 obs/next_obs 错位了，"
+                  "这批数据不能用来训练")
             return 1
     if args.csv:
         rows = read_csv_rows(args.csv, limit=5)
-        print(f"\nfirst {len(rows)} csv rows:")
+        print(f"\ncsv 前 {len(rows)} 行:")
         for row in rows:
             print("  ", {k: row[k] for k in ("frame", "action", "reward", "p1_hp", "p2_hp")})
     return 0

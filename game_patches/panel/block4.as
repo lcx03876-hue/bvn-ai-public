@@ -1,8 +1,7 @@
       private function bvnExportPanel() : void
       {
-         // Write the panel's current field contents as JSON so the Python side
-         // can verify them before starting a match. Failures are swallowed --
-         // this must never affect the game.
+         // 把面板输入框的当前内容写成 JSON，供 Python 开局前核对。
+         // 写失败绝不影响游戏（静默吞掉）。
          if(++_bvnPanelFrame % 4 != 0)
          {
             return;
@@ -21,9 +20,7 @@
                + "}";
             if(_bvnPanelFile == null)
             {
-               // The path is substituted by patch_debug_panel.py from
-               // bvn_paths.panel_state_path_as3().
-               _bvnPanelFile = new File("__PANEL_STATE_PATH__");
+               _bvnPanelFile = new File("C:\\deepseek\\bvn-ai\\runs\\panel_state.json");
             }
             if(_bvnPanelStream == null)
             {
@@ -40,7 +37,7 @@
 
       private function bvnQ(param1:Object) : String
       {
-         // Turn a TextField's text into a JSON string (quoted, minimal escapes).
+         // 把 TextField 的 text 变成 JSON 字符串（带引号 + 最简转义）
          if(param1 == null)
          {
             return "null";
@@ -54,3 +51,4 @@
          v = v.split("\"").join("\\\"");
          return "\"" + v + "\"";
       }
+

@@ -1,14 +1,12 @@
-         // Start the panel self-report export (writes every 4th frame).
+         // ★ 启动面板自省导出（每 4 帧写一次）★
          addEventListener(Event.ENTER_FRAME, function(param1:Event):void
          {
             bvnExportPanel();
          });
-         // Let keyboard events reach the stage.
-         //
-         // After typing into a TextField the focus stays there, and a focused
-         // TextField *consumes* key events, so stage listeners never fire
-         // (observed: F1 appeared to do nothing). Clearing the focus as soon as
-         // the field loses it lets keys bubble to the stage again.
+         // ★ 让按键能正常到达 stage ★
+         //   原因：刚在输入框里打完字时，焦点在 TextField 上，
+         //   TextField 会**消费按键事件**，stage 的监听器收不到（实测 F1 无反应）。
+         //   这里"一旦离开输入框就清空焦点"，按键就会正常冒泡到 stage。
          stage.addEventListener(FocusEvent.FOCUS_OUT, function(param1:FocusEvent):void
          {
             if(stage)
@@ -16,12 +14,9 @@
                stage.focus = null;
             }
          });
-         // F2: toggle between practice (40) and vs-CPU (22).
-         //
-         // A hotkey that called loadGame() directly never fired reliably (the
-         // stage's keyboard listener is affected by panel focus and timing), so
-         // this only flips the mode and lets the dependable "start test" button
-         // do the rest.
+         // ★ F2：在「练习模式(40)」和「电脑对战(22)」之间切换 ★
+         //   为什么不用热键直接 loadGame()：那条路实测一直没触发（stage 键盘监听
+         //   受面板焦点/时机影响）。改成"切模式 + 点已可靠的「开始测试」按钮"。
          stage.addEventListener(KeyboardEvent.KEY_UP, function(param1:KeyboardEvent):void
          {
             if(param1.keyCode != 113)          // F2
@@ -29,33 +24,30 @@
                return;
             }
             _testMode = _testMode == 40 ? 22 : 40;
-            _debugText.text = "[F2] test mode = " + _testMode
-               + (_testMode == 22 ? " (vs CPU, single)" : " (practice)");
+            _debugText.text = "[F2] 测试模式 = " + _testMode
+               + (_testMode == 22 ? " (电脑对战-单人)" : " (练习模式)");
          });
-         // ============ INJECTED: hotkey to enter vs-CPU directly (not original) ============
-         // Purpose: bypass the character-select screen ignoring the panel fields.
-         // `testClickHandler` already proved that "set GameData, then call
-         // loadGame()" starts a match, so this copies that approach and only
-         // changes the mode to 22 (vs CPU, single player -> P2 is an
-         // FighterAICtrler).
+         // ==================== 注入：热键直接开电脑对战（非原版）====================
+         // 目的：绕开"选角界面不吃面板字段"的问题（见 HANDOFF X 节）。
+         // `testClickHandler` 已经证明"设好 GameData 再 loadGame() 就能开局"，
+         // 这里照抄它，只把模式改成 22（电脑对战-单人 -> P2 是 FighterAICtrler）。
          //
-         // Bound to F1: on the character-select screen, pressing F1 starts a
-         // vs-CPU match with the characters currently in the panel.
-         // KEY_UP is used because games usually handle actions on KEY_DOWN.
-         // The whole body is wrapped in try/catch and reports into the panel's
-         // error text field, so a failure to fire is immediately visible.
+         // 绑定 F1：进选角界面后按 F1，直接以面板里的角色进电脑对战。
+         // 用 KEY_UP：游戏一般把动作处理放在 KEY_DOWN，KEY_UP 更容易收到。
+         // 整个处理体包 try/catch，并把结果/错误**写进面板的「错误信息提示」框**
+         // （`_debugText`），这样"没触发"也能立刻看出原因。
          stage.addEventListener(KeyboardEvent.KEY_UP, function(param1:KeyboardEvent):void
          {
-            if(param1.keyCode != 112)          // F1 only
+            if(param1.keyCode != 112)          // 只看 F1
             {
                return;
             }
             try
             {
-               // Belt and braces: drop focus from any text field first.
+               // 双保险：先把焦点从任何输入框拿掉，再继续
                stage.focus = null;
-               _debugText.text = "[F1] entering hotkey handler ...";
-               GameMode.currentMode = 22;      // vs CPU - single
+               _debugText.text = "[F1] 进入热键处理 ...";
+               GameMode.currentMode = 22;      // 电脑对战 - 单人
                TrainingCtrler.RECOVER_HP = _autoReceiveHp.text != "0";
                GameData.I.p1Select = new SelectVO();
                GameData.I.p2Select = new SelectVO();
@@ -73,4 +65,4 @@
                _debugText.text = "[F1][ERR] " + bvnHotErr.message;
             }
          });
-         // ================== end of hotkey injection ==================
+         // ================== 热键注入结束 ==================
