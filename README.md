@@ -105,24 +105,29 @@ believing the numbers:
 
 ```
 ichigo  vs  naruto
-难度 LV3   第 2 局   比分 1-0
-模型 wankai_v9 + 掩码
-我  ███████████░░░  1432
-敌  ███████░░░░░░░   912
-气  ██████████░░░  241/300  可变身
-距离 187   形态 1/2   对手状态 11
-▶ 上挑 ↑J   63%
-15:31:02  冲刺 →
-15:31:02  远攻 U
+Level 3   Round 2   Score 1-0
+model wankai_v9 + mask
+ME   ███████████░░░  1432
+CPU  ███████░░░░░░░   912
+QI   ██████████░░░  241/300  ready
+dist 187   form 1/2   opp state 11
+▶ up+J   63%
+15:31:02  dash right
+15:31:02  U ranged
 …
-打出 3421   承受 1180   净 +2241   决策 28.4/秒
+dealt 3421   taken 1180   net +2241
+decisions 28.4/s
 ```
 
 ```bash
 python demo.py                        # model + mask + HUD, one command
 python demo.py --rule                 # the rule policy instead
 python hud.py --right-of --borderless # HUD only (game already running)
+python hud.py --lang zh               # Chinese labels (default follows the system)
 ```
+
+The overlay is bilingual (`--lang auto|zh|en`); `auto` picks Chinese on a Chinese
+system and English everywhere else.
 
 The HUD reads two files and never touches the game: `runs/live.json` (written by
 the control loop every decision — `live_hud.py`) and `runs/bvn_state.json` (the

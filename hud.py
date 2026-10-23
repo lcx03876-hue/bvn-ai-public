@@ -1,30 +1,34 @@
-"""侧边实时 HUD：把 AI 此刻看到什么、按了什么，用大字显示在游戏窗口旁边。
+"""Side-panel HUD: what the AI sees and what it presses, in big text.
 
-用途只有一个 —— **录实机演示时让观众看得懂**。
+Built for recording demos — so the audience can follow along.
 
-三块内容：
+Three blocks:
 
-* **血条 / 气条**（自己与对手）—— 直接来自桥接，不是猜的；
-* **此刻的动作**（大字）+ 最近 10 个动作的滚动记录；
-* **统计**：累计打出 / 承受、变身次数、每秒决策数。
+* **HP / qi bars** (both fighters) — read straight from the injected bridge, not guessed;
+* **current action** (large) + a rolling ticker of the last actions;
+* **counters**: damage dealt / taken, transformations, decisions per second.
 
-数据源：
-  * `runs/live.json`   —— 控制环每帧写的"这一帧按了什么"（`live_hud.LiveWriter`）
-  * `runs/bvn_state.json` —— 游戏状态（回合、比分、难度、角色名）
+Data sources:
+  * ``runs/live.json``      — one small JSON per decision, written by the control
+    loop (``live_hud.LiveWriter``)
+  * ``runs/bvn_state.json`` — game state (round, score, difficulty, character ids)
 
-用法::
+Bilingual: ``--lang zh|en|auto`` (default follows the system locale).
 
-    python hud.py                          # 放在屏幕左上
-    python hud.py --right-of              # 自动贴在游戏窗口右侧（推荐）
-    python hud.py --right-of --w 460 --h 620
+Usage::
 
-配色刻意做成深色高对比，录像压缩后也看得清。
+    python hud.py                          # top-left of the screen
+    python hud.py --right-of               # dock beside the game window (recommended)
+    python hud.py --right-of --w 460 --h 620 --borderless --lang en
+
+Dark, high-contrast on purpose: it survives video compression.
 """
 
 from __future__ import annotations
 
 import argparse
 import ctypes
+import locale
 import tkinter as tk
 from ctypes import wintypes
 from pathlib import Path
@@ -34,29 +38,70 @@ from live_hud import DEFAULT_PATH, read_live
 
 STATE_PATH = "runs/bvn_state.json"
 
-# 深色主题
-BG = "#0d1117"
-BG2 = "#161b22"
-FG = "#e6edf3"
-DIM = "#8b949e"
-ACCENT = "#58a6ff"
-GOOD = "#3fb950"
-BAD = "#f85149"
-QI = "#d29922"
+# ------------------------------------------------------------------ i18n
+STRINGS: dict[str, dict[str, str]] = {
+    "level":   {"zh": "难度 LV{lv}", "en": "Level {lv}"},
+    "round":   {"zh": "第 {n} 局", "en": "Round {n}"},
+    "score":   {"zh": "比分 {a}-{b}", "en": "Score {a}-{b}"},
+    "waiting": {"zh": "（等待对局开始）", "en": "(waiting for a round)"},
+    "me":      {"zh": "我", "en": "ME"},
+    "opp":     {"zh": "敌", "en": "CPU"},
+    "qi":      {"zh": "气", "en": "QI"},
+    "ready":   {"zh": "可变身", "en": "ready"},
+    "dist":    {"zh": "距离 {v:.0f}", "en": "dist {v:.0f}"},
+    "forms":   {"zh": "形态 {n}/2", "en": "form {n}/2"},
+    "air":     {"zh": "空中", "en": "air"},
+    "ostate":  {"zh": "对手状态 {s}", "en": "opp state {s}"},
+    "dealt":   {"zh": "打出 {d:.0f}", "en": "dealt {d:.0f}"},
+    "taken":   {"zh": "承受 {t:.0f}", "en": "taken {t:.0f}"},
+    "net":     {"zh": "净 {n:+.0f}", "en": "net {n:+.0f}"},
+    "rate":    {"zh": "决策 {r:.1f}/秒", "en": "decisions {r:.1f}/s"},
+}
 
-ACTION_ZH = {
-    "noop": "不动", "left": "左移", "right": "右移", "jump": "跳",
-    "attack": "普攻 J", "catch1": "抓取 ←/→+J",
-    "zhao1": "远攻 U", "zhao2": "↑U", "zhao3": "↓U",
-    "bisha": "必杀 I", "bishaUP": "↑I", "bishaSUPER": "超杀 ↓I",
-    "airAttack": "空中 J", "airBisha": "空中 I", "airSkill": "空中技能",
-    "defend": "格挡 S", "ghostStep": "幽步", "assist": "支援",
-    "dashLeft": "冲刺 ←", "dashRight": "冲刺 →", "wankai": "变身 J+K",
+ACTION_LABEL: dict[str, dict[str, str]] = {
+    "noop":       {"zh": "不动", "en": "idle"},
+    "left":       {"zh": "左移", "en": "walk left"},
+    "right":      {"zh": "右移", "en": "walk right"},
+    "jump":       {"zh": "跳", "en": "jump"},
+    "attack":     {"zh": "普攻 J", "en": "J attack"},
+    "catch1":     {"zh": "抓取 ←/→+J", "en": "grab (dash+J)"},
+    "zhao1":      {"zh": "远攻 U", "en": "U ranged"},
+    "zhao2":      {"zh": "↑U", "en": "up+U"},
+    "zhao3":      {"zh": "↓U", "en": "down+U"},
+    "bisha":      {"zh": "必杀 I", "en": "I special"},
+    "bishaUP":    {"zh": "↑I", "en": "up+I"},
+    "bishaSUPER": {"zh": "超杀 ↓I", "en": "down+I super"},
+    "airAttack":  {"zh": "空中 J", "en": "air J"},
+    "airBisha":   {"zh": "空中 I", "en": "air I"},
+    "airSkill":   {"zh": "空中技能", "en": "air skill"},
+    "defend":     {"zh": "格挡 S", "en": "guard S"},
+    "ghostStep":  {"zh": "幽步", "en": "flash step"},
+    "assist":     {"zh": "支援", "en": "assist"},
+    "dashLeft":   {"zh": "冲刺 ←", "en": "dash left"},
+    "dashRight":  {"zh": "冲刺 →", "en": "dash right"},
+    "wankai":     {"zh": "变身 J+K", "en": "TRANSFORM J+K"},
 }
 
 
+def pick_lang(requested: str) -> str:
+    """Resolve ``auto`` from the system locale; anything unknown means English."""
+    if requested in ("zh", "en"):
+        return requested
+    try:
+        loc = (locale.getlocale()[0] or "") + (locale.getdefaultlocale()[0] or "")
+    except Exception:  # noqa: BLE001
+        loc = ""
+    return "zh" if loc.lower().startswith(("zh", "chinese")) else "en"
+
+
+# ------------------------------------------------------------------ theme
+BG, BG2 = "#0d1117", "#161b22"
+FG, DIM = "#e6edf3", "#8b949e"
+ACCENT, GOOD, BAD, QI = "#58a6ff", "#3fb950", "#f85149", "#d29922"
+
+
 def _win_rect(keyword: str = "火影") -> tuple[int, int, int, int] | None:
-    """游戏窗口的屏幕矩形 (left, top, right, bottom)；找不到返回 None。"""
+    """Screen rectangle (left, top, right, bottom) of the game window."""
     user32 = ctypes.windll.user32
     found: list[Any] = []
 
@@ -80,6 +125,8 @@ class Hud:
     def __init__(self, root: tk.Tk, args: argparse.Namespace) -> None:
         self.root = root
         self.args = args
+        self.lang = pick_lang(args.lang)
+
         root.title("BVN-AI HUD")
         root.configure(bg=BG)
         root.attributes("-topmost", bool(args.topmost))
@@ -90,7 +137,7 @@ class Hud:
             if rect:
                 x, y = rect[2] + 10, rect[1]
             else:
-                print("[hud] 没找到游戏窗口，退回到默认位置")
+                print("[hud] game window not found, using the default position")
         root.geometry(f"{w}x{h}+{x}+{y}")
 
         f_title = ("Microsoft YaHei UI", args.fs_title, "bold")
@@ -102,23 +149,22 @@ class Hud:
         self.c = tk.Canvas(root, bg=BG, highlightthickness=0, width=w, height=h)
         self.c.pack(fill="both", expand=True)
 
-        # 标题
-        self.t_title = self.c.create_text(pad, pad, anchor="nw", fill=FG, font=f_title, text="")
+        self.t_title = self.c.create_text(pad, pad, anchor="nw", fill=FG,
+                                          font=f_title, text="")
         self.t_sub = self.c.create_text(pad, pad + args.fs_title + 12, anchor="nw",
                                         fill=DIM, font=f_norm, text="")
         self.t_lbl = self.c.create_text(pad, pad + args.fs_title + 12 + args.fs_norm + 4,
                                         anchor="nw", fill=ACCENT, font=f_norm,
                                         text=args.label or "")
 
-        # 血条
         self.bars: dict[str, int] = {}
         self.geom: dict[str, tuple[float, float, float, float]] = {}
         y0 = pad + args.fs_title + 12 + args.fs_norm + 26 + (18 if args.label else 0)
-        bx0, bx1 = pad + 28, w - pad - 78
+        bx0, bx1 = pad + 56, w - pad - 78
         for i, key in enumerate(("me", "opp")):
             yy = y0 + i * (args.bar_h + 26)
             self.c.create_text(pad, yy + args.bar_h / 2, anchor="w", fill=DIM,
-                               font=f_norm, text=("我" if key == "me" else "敌"))
+                               font=f_norm, text=self.t(key))
             rect = self.c.create_rectangle(bx0, yy, bx1, yy + args.bar_h,
                                            fill=BG2, outline="#30363d")
             self.bars[key] = rect
@@ -126,32 +172,27 @@ class Hud:
             self.c.create_text(w - pad - 4, yy + args.bar_h / 2, anchor="e", fill=FG,
                                font=f_num, text="", tags=f"hp_{key}")
 
-        # 气条
         self.qi_y = y0 + 2 * (args.bar_h + 26) + 8
-        self.c.create_text(pad, self.qi_y, anchor="nw", fill=DIM, font=f_norm, text="气")
         qh = args.bar_h - 6
+        self.c.create_text(pad, self.qi_y + qh / 2, anchor="w", fill=DIM,
+                           font=f_norm, text=self.t("qi"))
         self.qi_rect = self.c.create_rectangle(bx0, self.qi_y, bx1, self.qi_y + qh,
                                                fill=BG2, outline="#30363d")
         self.geom["qi"] = (bx0, self.qi_y, bx1, self.qi_y + qh)
         self.c.create_text(w - pad - 4, self.qi_y + qh / 2, anchor="e",
                            fill=QI, font=f_num, text="", tags="qi_txt")
 
-        # 距离 / 空中 / 硬直
         self.t_meta = self.c.create_text(pad, self.qi_y + args.bar_h + 12, anchor="nw",
                                          fill=DIM, font=f_norm, text="")
-        # 当前动作
         self.t_act = self.c.create_text(pad, self.qi_y + args.bar_h + 12 + args.fs_norm + 26,
-                                        anchor="nw", fill=ACCENT, font=f_big, text="—")
-        # 滚动日志
+                                        anchor="nw", fill=ACCENT, font=f_big, text="-")
         self.log_y = self.qi_y + args.bar_h + 12 + args.fs_norm + 26 + args.fs_big + 22
         self.t_log = self.c.create_text(pad, self.log_y, anchor="nw", fill=DIM,
                                         font=f_num, text="")
-        # 统计
         self.t_stats = self.c.create_text(pad, h - pad, anchor="sw", fill=FG,
                                           font=f_norm, text="")
 
         self.rows: list[str] = []
-        self.me_hp = self.opp_hp = 0.0
         self.forms = 0
         self.dealt = self.taken = 0.0
         self.prev_me = self.prev_opp = None
@@ -160,8 +201,19 @@ class Hud:
         self.t_start = None
         self.last_key = None
         self.last_n = 0
+        self.times: list[float] = []
 
-    # ------------------------------------------------------------------ 绘制
+    # ------------------------------------------------------------------ i18n helpers
+    def t(self, key: str, **kw: Any) -> str:
+        return STRINGS[key][self.lang].format(**kw)
+
+    def action(self, name: str) -> str:
+        if not name:
+            return ""
+        table = ACTION_LABEL.get(name)
+        return table[self.lang] if table else name
+
+    # ------------------------------------------------------------------ drawing
     def _bar(self, key: str, rect: int, frac: float, color: str) -> None:
         x0, y0, x1, y1 = self.geom[key]
         f = max(0.0, min(1.0, frac))
@@ -170,15 +222,14 @@ class Hud:
 
     def tick(self) -> None:
         live = read_live(self.args.live) or {}
-        state = {}
         try:
             import json
             state = json.loads(Path(self.args.state).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             state = {}
 
-        p1 = (state.get("p1") or {})
-        p2 = (state.get("p2") or {})
+        p1 = state.get("p1") or {}
+        p2 = state.get("p2") or {}
         me_hp = float(live.get("me_hp", p1.get("hp", 0) or 0))
         opp_hp = float(live.get("opp_hp", p2.get("hp", 0) or 0))
         me_max = float(live.get("me_max", p1.get("hpMax", 2000) or 2000))
@@ -187,7 +238,8 @@ class Hud:
         dist = live.get("dist")
         act = live.get("act") or ""
 
-        # 统计（用血量下降累计，避免变身回血干扰"打出/承受"）
+        # Counters from HP drops only: transforming *heals*, so a net-HP number
+        # would understate damage taken (see docs/RESULTS.md).
         if self.prev_opp is not None and opp_hp < self.prev_opp:
             self.dealt += self.prev_opp - opp_hp
         if self.prev_me is not None and me_hp < self.prev_me:
@@ -200,11 +252,12 @@ class Hud:
 
         n_seq = int(live.get("n") or 0)
         if n_seq and self.last_n and n_seq < self.last_n:
-            # 控制环重启了（新的 LiveWriter，n 从 1 开始）-> 统计清零
+            # The controller restarted (fresh LiveWriter): reset the counters.
             self.dealt = self.taken = 0.0
             self.forms = 0
             self.rows.clear()
             self.n_act = 0
+            self.times.clear()
             self.t_start = live.get("t") or 0.0
         self.last_n = n_seq or self.last_n
         if self.t_start is None:
@@ -214,67 +267,69 @@ class Hud:
             key = (live.get("n"), act)
             if key != self.last_key:
                 self.last_key = key
-                self.rows.append(f"{live.get('wall', '')}  {ACTION_ZH.get(act, act)}")
+                self.rows.append(f"{live.get('wall', '')}  {self.action(act)}")
                 self.rows = self.rows[-11:]
+                self.times.append(float(live.get("t") or 0.0))
+                self.times = self.times[-240:]
 
-        # 标题 / 副标题
-        who1 = p1.get("id") or state.get("p1Id") or "我"
-        who2 = p2.get("id") or state.get("p2Id") or "对手"
+        who1 = p1.get("id") or state.get("p1Id") or ("我" if self.lang == "zh" else "ME")
+        who2 = p2.get("id") or state.get("p2Id") or "CPU"
         self.c.itemconfigure(self.t_title, text=f"{who1}  vs  {who2}")
-        lv = state.get("aiLevel")
-        rnd = state.get("roundNo")
-        s1, s2 = state.get("p1Wins"), state.get("p2Wins")
         bits = []
-        if lv:
-            bits.append(f"难度 LV{lv}")
-        if rnd:
-            bits.append(f"第 {rnd} 局")
-        if s1 is not None and s2 is not None:
-            bits.append(f"比分 {s1}-{s2}")
-        self.c.itemconfigure(self.t_sub, text="   ".join(bits) or "（等待对局开始）")
+        if state.get("aiLevel"):
+            bits.append(self.t("level", lv=state["aiLevel"]))
+        if state.get("roundNo"):
+            bits.append(self.t("round", n=state["roundNo"]))
+        if state.get("p1Wins") is not None and state.get("p2Wins") is not None:
+            bits.append(self.t("score", a=state["p1Wins"], b=state["p2Wins"]))
+        self.c.itemconfigure(self.t_sub, text="   ".join(bits) or self.t("waiting"))
 
-        # 血条 / 气条
         self._bar("me", self.bars["me"], me_hp / me_max if me_max else 0, GOOD)
         self._bar("opp", self.bars["opp"], opp_hp / opp_max if opp_max else 0, BAD)
         self._bar("qi", self.qi_rect, qi / 300.0, QI)
-        self.c.itemconfigure(f"hp_me", text=f"{me_hp:4.0f}")
-        self.c.itemconfigure(f"hp_opp", text=f"{opp_hp:4.0f}")
-        self.c.itemconfigure("qi_txt", text=f"{qi:3.0f}/300" + ("  可变身" if qi >= 299 else ""))
+        self.c.itemconfigure("hp_me", text=f"{me_hp:4.0f}")
+        self.c.itemconfigure("hp_opp", text=f"{opp_hp:4.0f}")
+        ready = f"  {self.t('ready')}" if qi >= 299 else ""
+        self.c.itemconfigure("qi_txt", text=f"{qi:3.0f}/300{ready}")
 
         meta = []
         if dist is not None:
-            meta.append(f"距离 {float(dist):.0f}")
-        meta.append(f"形态 {self.forms}/2")
+            meta.append(self.t("dist", v=float(dist)))
+        meta.append(self.t("forms", n=self.forms))
         if live.get("in_air"):
-            meta.append("空中")
+            meta.append(self.t("air"))
         if live.get("opp_state"):
-            meta.append(f"对手状态 {live['opp_state']}")
+            meta.append(self.t("ostate", s=live["opp_state"]))
         self.c.itemconfigure(self.t_meta, text="   ".join(meta))
 
         conf = live.get("conf")
         conf_txt = f"   {conf * 100:.0f}%" if isinstance(conf, (int, float)) else ""
         self.c.itemconfigure(self.t_act,
-                             text=f"▶ {ACTION_ZH.get(act, act) or '—'}{conf_txt}")
+                             text=f"▶ {self.action(act) or '-'}{conf_txt}")
         self.c.itemconfigure(self.t_log, text="\n".join(self.rows))
 
-        rate = 0.0
-        if live.get("t") and self.t_start:
-            dt = max(1e-6, float(live["t"]) - float(self.t_start))
-            rate = self.n_act / dt
+        # 频率 = 最近 1 秒内的决策数（不依赖起点，清零也不会炸）
+        now_t = float(live.get("t") or 0.0)
+        self.times = [t for t in self.times if now_t - t <= 1.0]
+        rate = float(len(self.times))
+        net = self.dealt - self.taken
         self.c.itemconfigure(
             self.t_stats,
-            text=(f"打出 {self.dealt:5.0f}   承受 {self.taken:5.0f}   "
-                  f"净 {self.dealt - self.taken:+.0f}     决策 {rate:4.1f}/秒"))
+            text=(f"{self.t('dealt', d=self.dealt)}   {self.t('taken', t=self.taken)}   "
+                  f"{self.t('net', n=net)}\n{self.t('rate', r=rate)}"))
 
         self.root.after(self.args.interval, self.tick)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="BVN-AI 实时 HUD（录像用）")
+    ap = argparse.ArgumentParser(description="BVN-AI live HUD (for recording)")
     ap.add_argument("--live", default=DEFAULT_PATH)
     ap.add_argument("--state", default=STATE_PATH)
+    ap.add_argument("--lang", choices=("auto", "zh", "en"), default="auto",
+                    help="HUD language; auto follows the system locale")
+    ap.add_argument("--label", default="", help="subtitle, e.g. 'model wankai_v9 + mask'")
     ap.add_argument("--right-of", action="store_true", dest="right_of",
-                    help="自动贴在游戏窗口右侧")
+                    help="dock to the right edge of the game window")
     ap.add_argument("--window-keyword", default="火影")
     ap.add_argument("--x", type=int, default=40)
     ap.add_argument("--y", type=int, default=40)
@@ -284,12 +339,11 @@ def main() -> int:
     ap.add_argument("--fs-title", type=int, default=19, dest="fs_title")
     ap.add_argument("--fs-big", type=int, default=30, dest="fs_big")
     ap.add_argument("--fs-norm", type=int, default=13, dest="fs_norm")
-    ap.add_argument("--interval", type=int, default=50, help="刷新间隔 ms")
+    ap.add_argument("--interval", type=int, default=50, help="refresh interval, ms")
     ap.add_argument("--no-topmost", action="store_false", dest="topmost")
-    ap.add_argument("--label", default="", help="副标题，比如 '模型 wankai_v9 + 掩码'")
     ap.add_argument("--borderless", action="store_true",
-                    help="去掉标题栏（录像更干净；用任务栏或 Alt+F4 关）")
-    ap.add_argument("--alpha", type=float, default=1.0, help="窗口不透明度 0.3~1.0")
+                    help="no title bar (cleaner for recording; close with Alt+F4)")
+    ap.add_argument("--alpha", type=float, default=1.0)
     args = ap.parse_args()
 
     root = tk.Tk()

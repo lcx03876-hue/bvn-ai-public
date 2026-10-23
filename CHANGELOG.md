@@ -54,6 +54,8 @@ Protocol changed to **complete best-of-3 matches with panel-verified characters*
   totals. The control loop writes one small JSON per decision (`--live`,
   atomically replaced), so the overlay never touches the game and cannot steal
   focus. `demo.py` starts both with one command.
+- **Bilingual HUD** (`--lang auto|zh|en`, default follows the system locale): all
+  labels and all 21 action names exist in Chinese and English.
 
 ### Fixed
 

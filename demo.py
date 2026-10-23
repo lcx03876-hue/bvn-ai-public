@@ -27,12 +27,17 @@ def main() -> int:
     ap.add_argument("--onnx", default="models/wankai_v9/qnet.onnx")
     ap.add_argument("--no-mask", action="store_true", help="关掉动作掩码（不推荐）")
     ap.add_argument("--hud-only", action="store_true", help="只开 HUD")
+    ap.add_argument("--lang", choices=("auto", "zh", "en"), default="auto",
+                    help="HUD 语言（auto=跟随系统）")
     ap.add_argument("--w", type=int, default=430)
     ap.add_argument("--h", type=int, default=620)
     args = ap.parse_args()
 
+    label = "rule policy" if args.rule else f"model {Path(args.onnx).parent.name}" + (
+        "" if args.no_mask else " + mask")
     hud = subprocess.Popen(
-        [sys.executable, str(ROOT / "hud.py"), "--right-of",
+        [sys.executable, str(ROOT / "hud.py"), "--right-of", "--borderless",
+         "--lang", args.lang, "--label", label,
          "--live", LIVE, "--w", str(args.w), "--h", str(args.h)],
         cwd=str(ROOT),
     )
